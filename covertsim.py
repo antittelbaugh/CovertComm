@@ -34,7 +34,7 @@ RX = 200
 
 # Parameters
 TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
-CH5ALICE = 5  # alice's covert channel
+CH5ALICE = 5  # Alice's covert channel
 
 # Physical model API helpers
 def Span(length, amp=None):
@@ -52,7 +52,7 @@ def createnetwork():
 
        r0 -> boost0 -> r1 -> boost1 --> tap ("amplifier") --> r2
        |               |                |                     |
-       t0 (bg)         t1 (alice)       willie                t2 (bob)
+       t0 (bg)         t1 (Alice)       Willie                t2 (Bob)
 
        We assign the port numbers explicitly and symmetrically:
 
@@ -67,7 +67,7 @@ def createnetwork():
        Note 2: The tap/amplifier only has a single input and output
        port so we don't have to worry about its port numbering.
 
-       For now, we model willie by monitoring tap's input signal.
+       For now, we model Willie by monitoring tap's input signal.
 
        Background traffic is on channels 1-10 but channel 5 isn't
        passed by r1.  Alice's traffic is on channel 5 and is added at
@@ -114,7 +114,7 @@ def createnetwork():
         net.add_link(t0, r0, src_out_port=TX+i, dst_in_port=ADD+i,
                      spans=[Span(1*m)])
 
-    # Local add link at r1 (alice) and drop link at r2 (bob)
+    # Local add link at r1 (Alice) and drop link at r2 (Bob)
     net.add_link(
         t1, r1, src_out_port=TX, dst_in_port=ADD, spans=[Span(1*m)])
     net.add_link(
@@ -298,22 +298,22 @@ def run():
 
     print('*** Monitoring signal and noise power\n')
 
-    # Monitor alice's transmit power
+    # Monitor Alice's transmit power
     t1 = net.name_to_node['t1']
     print("*** Monitoring transmit power out of t1:")
     sigwatts = getsignalwatts(t1)
     printdbm(sigwatts)
 
-    # Monitor merged signals out of boost1 (bg + alice)
+    # Monitor merged signals out of boost1 (bg + Alice)
     boost1 = net.name_to_node['boost1']
     print("*** Monitoring merged signals out of boost1:")
     sigwatts = getsignalwatts(boost1)
     printdbm(sigwatts)
 
-    # Monitor willie's tap signals
-    # Important!: Right now we are allowing willie to observe 100%
+    # Monitor Willie's tap signals
+    # Important!: Right now we are allowing Willie to observe 100%
     # of the signal; more realistically we might do a 99/1 split
-    # by lowering the amp gain slightly and attenuating willie's
+    # by lowering the amp gain slightly and attenuating Willie's
     # signals appropriately.
     tap = net.name_to_node['tap']
     print("*** Monitoring input signals at tap (NON-ATTENUATED!!):")
@@ -325,7 +325,7 @@ def run():
     r2 = net.name_to_node['r2']
     plotsignals(r2, LINEIN)
 
-    # Monitor bob's received signal
+    # Monitor Bob's received signal
     t2 = net.name_to_node['t2']
     print("*** Monitoring incoming signal at t2:")
     sigwatts = getsignalwatts(t2, RX)
