@@ -22,6 +22,7 @@ from mnoptical.node import Transceiver, Roadm, LineTerminal
 from mnoptical.units import abs_to_db
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Units
 km = dB = dBm = 1.0
@@ -59,7 +60,7 @@ num_roadms = 1
 
 # Alice's transmission power, which Alice chooses such her
 # relative entropy budget for Willie is not exceeded (see below). 
-power_a = -48*dBm
+power_a = -75*dBm
 
 
 # Budget for Total Relative Entropy at Willie. This tracks with 
@@ -68,7 +69,10 @@ power_a = -48*dBm
 # Willie prob(error) > 0.45. 
 nRE_budget = 0.05**2  # 0.0025
 
-
+# Collection of calculated Willie relative entropies, for each channel-use loop
+RE_list = []
+# Collection of calculated covert bits at Bob
+bobsbits_list = []
 
 # *******************************************************************
 # Toggles
@@ -337,118 +341,143 @@ def willie_input_osnr(tap):
 
 
 # Run tests
-def run():
+def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals, n):
     "Run test transmission(s) on our modeled network"
 
-    # Create network
-    print('*** Creating network')
-    net = createnetwork()
-    
-    if update_net_plot: 
-        # Plot to file
-        plotnet(net)
+    for i in range(0,n):
 
-    # Configure network
-    print('*** Configuring network')
-    configroadms(net)
-    configterminals(net)
+        # Create network
+        print('*** Creating network')
+        net = createnetwork()  # --------------------------  Hmmm. Not creating a new network each time... *******
+        
+        if update_net_plot: 
+            # Plot to file
+            plotnet(net)
 
-    ##print('*** Monitoring signal and noise power\n')
+        # Configure network
+        print('*** Configuring network')
+        configroadms(net)
+        configterminals(net)
 
-    # Monitor Alice's transmit power _________________________________________ A L I C E
-    print("\n\t\tA L I C E \n")
-    t1 = net.name_to_node['t1']  # Looking up node by name
-    p_a_monitor = getsignalwatts(t1)
-    print("*** Monitoring transmit power out of t1:")
-    printdbm(p_a_monitor)
+        ##print('*** Monitoring signal and noise power\n')
 
-    """
-    # Monitor merged signals out of boost1 (bg + Alice)
-    boost1 = net.name_to_node['boost1']
-    print("*** Monitoring merged signals out of boost1:")
-    sigwatts = getsignalwatts(boost1)
-    printdbm(sigwatts)
-    
-    """
-    
-    # Monitor Willie (tap) signals ___________________________________________ W I L L I E
-    print("\n\t\tW I L L I E \n")
-    # Important!: Right now we are allowing Willie to observe 100%
-    # of the signal; more realistically we might do a 99/1 split
-    # by lowering the amp gain slightly and attenuating Willie's
-    # signals appropriately.
-    tap = net.name_to_node['tap']
-    print("*** Monitoring input signals at tap (NON-ATTENUATED!!):")
-    sigwatts = getsignalwatts(tap)
-    printdbm(sigwatts)
-    
-    
-    # OSNR at Willie's tap for Alice's channel only
-    ## willie_input_osnr = 
-    willie_input_osnr_list = tap.monitor.get_list_osnr()
-    #print("\nwillie osnr list: \n", willie_input_osnr_list)
-    print("\nwillie osnr [dB] ch5: \n", willie_input_osnr_list[4][1])  # Alice: 2nd spot in tuple in ch5. *******How do this generally?!
+        # Monitor Alice's transmit power _________________________________________ A L I C E
+        print("\n\t\tA L I C E \n")
+        t1 = net.name_to_node['t1']  # Looking up node by name
+        p_a_monitor_dBm = getsignalwatts(t1)
+        print("*** Transmit powers out of t1:")
+        printdbm(p_a_monitor_dBm)
+        
+        power_a_Watts = 10**(power_a/10)/1000 # from dBm
+        print(f"Alice power [W]: {power_a_Watts}")
 
-    willie_input_osnr = willie_input_osnr_list[4][1]
+        """
+        # Monitor merged signals out of boost1 (bg + Alice)
+        boost1 = net.name_to_node['boost1']
+        print("*** Monitoring merged signals out of boost1:")
+        sigwatts = getsignalwatts(boost1)
+        printdbm(sigwatts)
+        
+        """
+        
+        # Monitor Willie (tap) signals ___________________________________________ W I L L I E
+        print("\n\t\tW I L L I E \n")
+        # Important!: Right now we are allowing Willie to observe 100%
+        # of the signal; more realistically we might do a 99/1 split
+        # by lowering the amp gain slightly and attenuating Willie's
+        # signals appropriately.
+        tap = net.name_to_node['tap']
+        print("*** Input signals at tap (Willie)\n*** ***(NON-ATTENUATED!!):")
+        sigwatts = getsignalwatts(tap)
+        # Print all of Willie's received signals
+        ##printdbm(sigwatts)
+        
+        # OSNR at Willie's tap for Alice's channel only
+        willie_input_osnr_list = tap.monitor.get_list_osnr()
+        #print("\nwillie osnr list: \n", willie_input_osnr_list)
+        willie_input_osnr_alice_db = willie_input_osnr_list[4][1]
+        print(f"\nWillie OSNR [dB] for ch5 (Alice): {willie_input_osnr_alice_db:.4f}")  # Alice: 2nd spot in tuple in ch5. *******How do this generally?!
+        
+        willie_input_osnr_alice_lin = 10**(willie_input_osnr_alice_db / 10)
+        print(f"Willie OSNR [linear] for ch5 (Alice): {willie_input_osnr_alice_lin:.4f}")
+        # Relative entropy per channel use at Willie
+        RE = (1/2)*np.log( (1 + willie_input_osnr_alice_lin) - (1 + willie_input_osnr_alice_lin**-1)**-1 )
+        # NO!: nRE = n * RE  # This is NOT total RE, bc the RE is different each time, bc of noise. 
+        RE_list.append(RE)
 
-    # Relative entropy per channel use at Willie
-    RE = (1/2)*np.log( (1 + willie_input_osnr) - (1 + willie_input_osnr**-1)**-1 )
-    nRE = n * RE  # This is total RE, the per use times the number of channel uses
-    
-    print(f"Willie total relative entropy budget set by Alice: {nRE_budget:.6f}")
-    print(f"Actual Willie total relative entropy: {nRE:.6f}")
-    
-    if nRE >= nRE_budget:
-        print("\n   /!\  Alice relative entropy budget exceeded! Power too high! \n")
-    
-    
-    # willie_prob_err = TBD -- or not TBD, because this behaves the same as relative entropy (Boulat)
-    
-    if plot_willie_signals: 
-        plotsignals(tap, 0)
-    
+        print(f"\nWillie total relative entropy budget set by Alice: {nRE_budget:.8f}")
+        print(f"Willie relative entropy for this channel use: {RE:.8f}")
+        print(f"Willie total relative entropy so far: {sum(RE_list):.8f}")
+        
+        if sum(RE_list) >= nRE_budget:
+            print("\n----------- /!\  Alice relative entropy budget exceeded! Power too high! \n")
+        
+        
+        # willie_prob_err = TBD -- or not TBD, because this behaves the same as relative entropy (Boulat)
+        
+        if plot_willie_signals: 
+            plotsignals(tap, 0)
+        
 
-    # Monitor Bob ____________________________________________________________ B O B
-    print("\n\t\tB O B \n")
-    
-    if plot_r2_signals:
-        # Plot input signals at r2
-        r2 = net.name_to_node['r2']
-        plotsignals(r2, LINEIN)
+        # Monitor Bob ____________________________________________________________ B O B
+        print("\n\t\tB O B \n")
+        
+        if plot_r2_signals:
+            # Plot input signals at r2
+            r2 = net.name_to_node['r2']
+            plotsignals(r2, LINEIN)
 
-    # Monitor Bob's received signal (t2 gets only Alice's channel)
-    t2 = net.name_to_node['t2']
-    print("*** Monitoring incoming signal at t2 (Bob, receiving only Alice's channel):")
-    sigwatts = getsignalwatts(t2, RX)
-    printdbm(sigwatts)
-    if plot_t2_signals:
-        plotsignals(t2, RX)
+        # Monitor Bob's received signal (t2 gets only Alice's channel)
+        t2 = net.name_to_node['t2']
+        print("*** Signals at t2 (Bob, receiving only Alice's channel):")
+        sigwatts = getsignalwatts(t2, RX)
+        printdbm(sigwatts)
+        if plot_t2_signals:
+            plotsignals(t2, RX)
+        
+        # Bob's signal and ASE powers in Watts, if needed 
+        #print('bob power [W]: ', t2.monitor.get_dict_power() )
+        #print('bob ase [W]: ', t2.monitor.get_dict_ase_noise() )
+        
+        
+        # OSNR and covert bits at Bob
+        osnr_bob_db_list = t2.monitor.get_list_osnr()  # This returns OSNR in dB, which can be negative. 
+        osnr_bob_db = osnr_bob_db_list[0][1]
+        print(f"Bob OSNR [dB]: {osnr_bob_db:.4f}")
+        osnr_bob_lin = 10**(osnr_bob_db / 10) # convert OSNR dB to linear. Can't be <0 else log is undefined. 
+        print(f"Bob OSNR [linear]: {osnr_bob_lin:.4f}")
+        osnr_bob_peruse = osnr_bob_lin / n
+        
+        bobsbits = n/2 * np.log(1 + osnr_bob_peruse)
+        bobsbits_list.append(bobsbits)
+
+        print(f"\nCOVERT BITS RECEIVED BY BOB FOR THIS RUN: {bobsbits:.4f}\n")
+        print(f"TOTAL COVERT BITS RECEIVED BY BOB SO FAR: {sum(bobsbits_list):.4f}\n")
+        
+        
+        # ________________________________________________________________________
+        # END OF CHANNEL USES (n) FOR-LOOP
     
-    
-    print('-------bob power [W]: ', t2.monitor.get_dict_power() )
-    print('-------bob ase [W]: ', t2.monitor.get_dict_ase_noise() )
-    
-    
-    # OSNR and covert bits at Bob
-    osnr_bob_list = t2.monitor.get_list_osnr()  # This returns the logarithmic OSNR
-    print("Bob OSNR [log] list: ", osnr_bob_list)
-    
-    osnr_bob = 10**(osnr_bob_list[0][1] / 10) # confirm ...? OSNR dB to linear  ***********
-    print(f"Bob OSNR [lin]: {osnr_bob:.4f}")
-    osnr_bob_peruse = osnr_bob / n
-    
-    bobsbits = n/2 * np.log(1 + osnr_bob_peruse)
-    print(f"\nCOVERT BITS RECEIVED BY BOB FOR THIS RUN: {bobsbits:.2f}\n")
-    
-    # ________________________________________________________________________
-    
-    
-    
-    
+    # Total number of covert bits received by Bob across the n channel uses:
+    # (We can't just do n*the bits of one use, bc it's a new value each time, bc the noises are different)
+    bobsbits_total = sum(bobsbits_list)
+    print(f"TOTAL BITS RECEIVED BY BOB ACROSS {n} USES:\t\t{bobsbits_total:.4f}")
+
+    # Total RE at Willie across all the channel uses simulated: 
+    RE_total = sum(RE_list)
+    print(f"CUMULATIVE RELATIVE ENTROPY AT WILLIE ACROSS {n} USES:\t{RE_total:.6f}")
+
+    print(RE_list)
+    plt.plot(RE_list)
+    plt.show()
+
     if not update_net_plot:
-        print("\n\n*** *** *** Topology plot not updated! (Toggled off)\n\n")
+        print("\n*** *** Topology plot not up to date! (Toggled off)\n")
     
 
-# Do it!
-run()
+# Execute run() with the loop number n (channel uses). 
+# Leave the plot toggles at 0 if n > 1, so we don't create 
+# a bunch of useless plots (that each overwrite the last). 
+run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals, n=5)
+
 print('*** Done!')
