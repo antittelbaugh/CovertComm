@@ -47,6 +47,10 @@ RX = 2
 TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
 CH5ALICE = 5  # Alice's covert channel
 
+if TXCOUNT != 10 or CH5ALICE != 5:
+    print("\t-Changing # of bg channels from 10 will break things \
+    \n\t because ch5 for Alice is indexed explicitly as [4] for Willie OSNR")
+
 
 # _________________________________________________________________________
 # Covert Comm Variables 
@@ -79,7 +83,7 @@ def Span(length, amp=None):
     return Segment(span=Fiber(length=length), amplifier=amp)
 
 # Network topology
-def createnetwork(power_a, length_bga, length_aw, length_wb):
+def createnetwork(power_a, length_bga, length_aw, length_wb, ab_spans, ab_span_amp_gain):
     """We model a simple network for covert communication.
        Background traffic originates at t0 and is multiplexed
        by r0, amplified by boost0, and received at r1's line input.
@@ -140,19 +144,20 @@ def createnetwork(power_a, length_bga, length_aw, length_wb):
     # Merged traffic goes from r1 -> boost1 -> __km -> tap -> __km -> r2
 
     #           hmmmm    *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *  *    !
-    """
-    # Generic amp for any number of amps on the Alice to Bob link:
+    
+    # General-purpose amp for given number of amps on the Alice to Bob link
     amp_ab = net.add_amplifier('amp_ab', target_gain=ab_span_amp_gain, monitor_mode='in')
 
+    # General-purpose span for given number of spans on the Alice to Bob link
+    spans_ab = [Span(length=length_aw, amp=amp_ab)]
+    
     # Spec'd number of spans on the Alice to Bob link, each ending in an amp with spec'd gain
     for s in range(1, ab_spans + 1):
-        spans_ab.append(Span(length=length_aw_spans, amp=amp_ab))  # Add additional spans+amps as spec'd
+        spans_ab.append(Span(length=length_aw, amp=amp_ab))  # Add additional spans+amps as spec'd
     
     
-    # The single boost amp going in to A to B span
+    # The single boost amp at the start of the A to B span
     boost_ab = net.add_amplifier('boost_ab', target_gain=3*dB, boost=True, monitor_mode='out')
-    
-    spans_ab = [Span(length=length_aw_spans, amp=amp_ab)]
     
     net.add_link(r1, r2, src_out_port=LINEOUT, dst_in_port=LINEIN,
         boost_amp=boost_ab, spans=spans_ab )
@@ -169,7 +174,7 @@ def createnetwork(power_a, length_bga, length_aw, length_wb):
         r1, r2, src_out_port=LINEOUT, dst_in_port=LINEIN,
         boost_amp=boost1, spans=spans1 )
     
-
+    """
 
     # Background traffic add links at r0
     for i in range(TXCOUNT):
@@ -309,12 +314,12 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
             if amp:
                 label += f' --> {amp.name}'
                 # Sum the gains of any amps to include in a newline of the label
-                gain_sum += amp.target_gain
+                # gain_sum += amp.target_gain  # Not correct as is
 
-        label += f' --> {node2}:{port2}   \n'
+        label += f' --> {node2}:{port2}   \n\n\n'
         
-        # Label total gain on each link
-        label += 'Gain (TODO: add boosts!): ' + f'{gain_sum:.1f}' + ' dB \n\n\n'
+        # Idea: Label total gain on each link
+        #label += 'Gain (TODO: add boosts!): ' + f'{gain_sum:.1f}' + ' dB \n\n\n'
 
         g.add_edge(node1.name, node2.name,
                    fontsize=14, fontname='helvetica bold',
@@ -361,7 +366,7 @@ def plotsignals(node, port=None):
 
 # Run tests ====================================================================================================
 def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals, 
-    length_bga, length_aw, length_wb):
+    length_bga, length_aw, length_wb, ab_spans, ab_span_amp_gain):
 
     "This function contains the entire process of Alice creating digital twin networks and \
     finding the optimal (highest permitted by RE budget) powers for a given selection of \
@@ -373,33 +378,34 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # Internal parameters chosen by Alice. We could make these function arguments like the others. 
     
     # Arbitrary initial test power
-    power_a_test_init   = -82*dBm
+    power_a_test_init   = -84*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 0.25*dBm
+    power_a_stepsize    = 0.15*dBm
 
     # How close Alice will allow Willie's RE to be to her actual budget [percentage]. Arbitrary. 
     RE_margin        = 0.05
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
-    max_twin_tests   = 40
+    max_twin_tests   = 150
 
     # Number of modes Alice will test in twin network. Used in modes_span. Higher value --> smoother RE vs modes plot.
-    modes_to_test    = 8
+    modes_to_test    = 10
     
     # Number of modes Alice will test and transmit up to
     max_modes  = 10000
     # Log list of mode numbers Alice will actually test with:
     modes_span = np.logspace(1, np.log10(max_modes), num=modes_to_test)
     
-    # Number of optical mode points to plot against
+    # Number of optical mode points to plot against (for some plots)
     n_pts = 1000
 
     # Channel uses (optical modes) to evaluate covertness against
     n_all = np.linspace(1, max_modes, n_pts)
     
-    # Initialize list of Alice's optimal powers
+    # Initialize lists of Alice's optimal powers and num iterations to find them
     power_a_test_list = []
+    power_a_test_num_list = []
     
     #___________________________________________________________________________________________________________
 
@@ -412,7 +418,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # "real" transmission to Bob, and we'll see how many covert bits he can receive (vs. # of modes). 
 
     for n in modes_span:
-        round(n)
+        n = round(n)
 
     print("Inputted subset of modes to find power for: \n", modes_span)
 
@@ -433,7 +439,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             print(f"Alice test power [dBm] increased to: {power_a_test:.4f}")
 
             print('*** Creating Alice''s latest digital twin network')
-            net = createnetwork(power_a_test, length_bga, length_aw, length_wb)
+            net = createnetwork(power_a_test, length_bga, length_aw, length_wb, ab_spans, ab_span_amp_gain)
             # Re-running this creates identical network, unless we add randomness
 
             print('*** Configuring Alice''s latest digital twin network')
@@ -463,6 +469,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
         power_a_test -= power_a_stepsize        # Take off last step, which caused RE to exceed margin
         power_a_test_list.append(power_a_test)  # Store the optimized power for this number of modes
+        power_a_test_num_list.append(twin_test_counter)
 
         print("\n\nOPTIMAL POWER for this number of modes: ", power_a_test, "\nLIST: ", power_a_test_list)
 
@@ -489,7 +496,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # Now in the "real" network, using the optimal powers determined above
         # Create network
         print('\n*** Creating network')
-        net = createnetwork(power_a, length_bga, length_aw, length_wb)
+        net = createnetwork(power_a, length_bga, length_aw, length_wb, ab_spans, ab_span_amp_gain)
         # Re-running this does not create a new network, without added randomness
         
         if update_net_plot: 
@@ -602,23 +609,25 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # Store Bob covert bits for this current power
         bobsbits_list.append(bobsbits)
         print("To be plotted, Bobsbits list:\n", bobsbits_list)
-
-        if not update_net_plot:
-            print("\n*** *** Topology plot not up to date! (Toggled off)\n")
     
     # ________________________________________________________________________ end of 'actual' loop
     # Still in def run()
 
 
     print("Inputted subset of modes that powers were found for: \n", modes_span)
+    print("Alice's optimal powers for these modes: \n", power_a_test_list)
+    print("And number of search steps to find them: ", power_a_test_num_list)
+
 
     plt.figure(1)
-    plt.plot(modes_span, power_a_test_list, 'b')
+    plt.plot(modes_span, power_a_test_list, 'b', label='Simulated')
+    plt.plot(modes_span, np.log(1/np.sqrt(modes_span)), 'k', linestyle='--', label='Theoretical: log(1/sqrt(n)) \n= -(1/2)log(n)')
     plottitle = '\nAlice Optimal Power [dBm] vs. Channel Uses (Optical Modes)'
     plottitle += f"\nRE safety margin: {RE_margin*100:.1f}%\n"
     plt.title(plottitle)
     plt.ylabel("Alice Optimal Power [dBm]")
     plt.xlabel("Channel Uses (Optical Modes)")
+    plt.legend()
     plt.grid(True)
 
 
@@ -639,11 +648,12 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
     # Plot Bob covert bits vs. channel use
     plt.figure(3)
-    plt.plot(modes_span, bobsbits_list)
+    plt.plot(modes_span, bobsbits_list, label='Simulated')
+    plt.plot(modes_span, np.sqrt(modes_span), 'k', linestyle='--', label='Theoretical: sqrt(n)')
     plt.title("Covert Bits Received by Bob vs. Number of Optical Modes in Transmission")
     plt.ylabel("Covert Bits [bits]")
     plt.xlabel("Channel Uses (Optical Modes)")
-    #plt.legend()
+    plt.legend()
     plt.grid(True)
 
     
@@ -658,8 +668,9 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     bob_bitrate_list_kbit = (bobsbits_list/(transmit_time_ms/1000))/1000  # kbits/s from the second "/1000"
     plt.figure(4)
     plt.plot(modes_span, bob_bitrate_list_kbit, 'm')
+    plt.plot(modes_span, 1/np.log(modes_span), 'k', linestyle='--', label='Theoretical (?): 1/log(n)')
     plottitle = 'Covert Bit Rate to Bob [kbits/s] vs. Optical Modes in Transmission'
-    plottitle += '\nMode Duration: ' + f'{time_per_mode*10**9:.2f} ns'
+    plottitle += '\nPulse Duration: ' + f'{time_per_mode*10**9:.2f} ns'
     plt.title(plottitle)
     plt.ylabel("Covert Bit Rate [kbits/s]")
     plt.xlabel("Channel Uses (Optical Modes)")
@@ -669,9 +680,15 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
     plt.show()
 
+
+    if not update_net_plot:
+        print("\n*** *** Topology plot not up to date! (Toggled off)\n")
+
+
     return None  # hmmm
 
     # ________________________________________________________________________ end of run() definition
+    # ________________________________________________________________________
 
 
 
@@ -681,22 +698,29 @@ plot_willie_signals = 0
 plot_r2_signals     = 0
 plot_t2_signals     = 0
 
+# ________________________________________________________________________
 # VARIABLE Topology Parameters! These will be fed to CreateNetwork() to iterate across topologies
+
 length_bga      = 10.0*km  # ro -- r1 span; Background to Alice's ROADM
 length_aw       = 10.1*km  # Alice's ROADM to Willie's tap
 length_wb       = 10.1*km  # Willie's tap to Bob's ROADM
+ab_spans        = 3        # Number of spans of length length_aw on the Alice to Bob link, each with amp
+ab_span_amp_gain= 3*dBm    # Gain of the repeated amps on the A B span
 
+# Number of ROADMs on the Alice to Bob link   # not currently used
 num_roadms      = 1
 
-#   + more!
 
+#           + more!
+
+# ________________________________________________________________________
 
 run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
-    length_bga, length_aw, length_wb)
+    length_bga, length_aw, length_wb, ab_spans, ab_span_amp_gain)
 
-print('\n*** Done!\n')
+print('\n\n*** Done!\n')
 print("*** NOTES:")
 print("\t-Willie tap element isn't a splitter yet. No attenuation.")
 print("\t-Willie tap amp target_gain set to zero.")
-print("\t-Changing # of bg channels from 10 might break things \
-    \n\t because ch5 for Alice is indexed explicitly as [4] at Willie")
+print("\t-Changing # of bg channels from 10 will break things \
+    \n\t because ch5 for Alice is indexed explicitly as [4] at Willie OSNRs")
