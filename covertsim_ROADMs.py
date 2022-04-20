@@ -18,7 +18,7 @@ from mnoptical.network import Network
 # Note: Fiber() is a length of fiber and Segment() is a
 # (Fiber, Amplifier) tuple
 from mnoptical.link import Span as Fiber, SpanTuple as Segment
-from mnoptical.node import Transceiver, Roadm, LineTerminal, SignalTracing
+from mnoptical.node import Transceiver, Roadm, LineTerminal, SignalTracing, Splitter
 from mnoptical.units import abs_to_db
 
 
@@ -28,6 +28,7 @@ from mpl_toolkits import mplot3d
 from matplotlib import cm
 import random as rand
 import sys
+import datetime
 
 # Units
 km = dB = dBm = 1.0
@@ -100,8 +101,6 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
        passed by r1.  Alice's traffic is on channel 5 and is added at
        r1."""
 
-    print('\n\n: tap_loc: ', tap_loc, '\n\n')
-
     net = Network()
 
 
@@ -129,6 +128,10 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
                     monitor_mode='out')
     t2 = net.add_lt('t2', transceivers=[Transceiver(1,'tx1',0*dBm)],
                     monitor_mode='in')
+
+    t3 = net.add_lt('t3', transceivers=[Transceiver(1,'tx1',0*dBm)],
+                    monitor_mode='in')
+
     r1 = net.add_roadm('r1', monitor_mode='out')
     r2 = net.add_roadm('r2', monitor_mode='in')
     
@@ -199,8 +202,8 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     # ================ And incorporating the splitter (Willie's tap) location
 
     # New splitter element:    *** import and confirm *******************************************************
-    #tap = net.add_node('Tap', cls=Splitter, split={OUT1:99, OUT2:1})
-    tap = net.add_roadm('tap', monitor_mode='in')
+    tap = net.add_node('tap', cls=Splitter, split={LINEOUT:99, 2:1})
+    #tap = net.add_roadm('tap', monitor_mode='in')
     # tap_loc: 0 = right after r1. n = after r_ab_[n]. 
 
     # If tap is after r1 (at the end of the span after r1)
@@ -295,6 +298,8 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     # Local add link at r1 (Alice) and drop link at r2 (Bob)
     net.add_link(t1, r1, src_out_port=TX, dst_in_port=ADD, spans=[Span(1*m)])
     net.add_link(r2, t2, src_out_port=DROP, dst_in_port=RX, spans=[Span(1*m)])
+    # Link from Willie tap OUT2 to his terminal
+    net.add_link(tap, t3, src_out_port=2, dst_in_port=RX, spans=[Span(1*m)])
 
     return net
 
@@ -342,7 +347,7 @@ def configroadms(net, num_ab_roadms):
 
 def configterminals(net):
     "Configure terminals and transceivers"
-    t0, t1, t2 = [net.name_to_node[f't{i}'] for i in (0, 1, 2)]
+    t0, t1, t2, t3 = [net.name_to_node[f't{i}'] for i in (0, 1, 2, 3)]
 
     # Configure background transmitters
     for i in range(TXCOUNT):
@@ -354,8 +359,11 @@ def configterminals(net):
         t1.id_to_transceivers[1], CH5ALICE, out_port=TX)
     t2.assoc_rx_to_channel(
         t2.id_to_transceivers[1], CH5ALICE, in_port=RX)
+    t3.assoc_rx_to_channel(
+        t3.id_to_transceivers[1], CH5ALICE, in_port=RX)
 
     # Turn on all transceivers
+    t3.turn_on()
     t2.turn_on()
     t1.turn_on()
     t0.turn_on()
@@ -387,7 +395,7 @@ def printdbm(sigwatts):
 
 # Plot Network Graph
 def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
-            colorMap=None, title='Covert Communication Network\nAlice (t1, r1)\tBob (t2, r2)\tWillie(\"tap\")'):
+            colorMap=None, title='Title?'):
     "Plot network graph to outfile"
     try:
         import pygraphviz as pgv
@@ -399,6 +407,10 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
     if colorMap:
         color.update(colorMap)
     nfont = {'fontname': 'helvetica bold', 'penwidth': 3}
+
+    title = 'Covert Communication Network\nAlice (t1, r1)\tBob (t2, r2)\tWillie(\"tap\")'
+    title += '\nUpdated: ' + str(datetime.datetime.now())
+
     g = pgv.AGraph(strict=False, directed=directed, layout=layout,
                    label=title, labelloc='t', **nfont)
     roadms = net.roadms
@@ -567,7 +579,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             # Re-running this creates identical network, unless we add randomness
         
             # *****************************************************************************/////////////////
-            #plotnet(net)
+            plotnet(net)
 
             print('*** Configuring latest Alice digital twin network...')
             configroadms(net, num_ab_roadms)
@@ -583,7 +595,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             #print('---------amp_ab OSNR list: ', amp_ab.monitor.get_list_osnr())
 
             # OSNR at Willie's tap for Alice's channel only
-            tap = net.name_to_node['tap']
+            tap = net.name_to_node['t3']
             willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
             print('\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list)
             willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
@@ -760,7 +772,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     print("\nAnd number of search steps to find them: ", power_a_test_num_list)
     
     print('\nNumber of Alice to Bob spans+amps (num_ab_spans) for this run: ', num_ab_spans)
-    print('And Willie is at amp: ', tap_loc)
+    #print('And Willie is at amp: ', tap_loc)
 
 
     # Lists of: covert bits at bob, Willie RE, Alice Power, each vs. number of modes.
