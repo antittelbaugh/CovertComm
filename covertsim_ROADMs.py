@@ -158,7 +158,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     tap = net.add_amplifier('tap', target_gain=ab_span_amp_gain, monitor_mode='in')
     """
 
-    # ================ OPTIONALLY ADDING ROADMs ON THE ALICE TO BOB LINK ==========================================
+    # ================ OPTIONALLY ADDING ROADMs ON THE ALICE TO BOB LINE ==========================================
     r_ab = []
     #     list of added ROADMs on the AB line.................?
     for r in range(1, num_ab_roadms + 1):
@@ -166,71 +166,113 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
         # So now r_ab_x is r_ab[x]
 
     # ================ OPTIONALLY ADDING AMPS 
-    # ================ ON ***EACH and EVERY SPAN BETWEEN ROADMS*** ON THE ALICE TO BOB LINK =======================
+    # ================ ON ***EACH and EVERY SPAN BETWEEN ROADMS*** ON THE ALICE TO BOB LINE =======================
 
-    # General-purpose span for given number of spans on the Alice to Bob link
-    spans_ab = [] #[Span(length=length_ab_spans, amp=amp_ab)] -- Start empty so that first can be tap, if spec'd
-    
+    # Shorter names for these, because we have to call this function every time we link() things
+    n, l, g = num_ab_spans, length_ab_spans, ab_span_amp_gain
 
-    # Spec'd number of spans between EACH ROADM on the Alice to Bob link. 
-    # Each span ends in an amp with a spec'd gain
-    for s in range(1, num_ab_spans + 1):
+    def spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p): 
+        "Create spec'd number of spans between EACH ROADM on the Alice to Bob link.\
+        Each span ends in an amp with a spec'd gain.\
+        This needs to be a function because we can't reuse a single span variable over and over!"
 
-        params = dict(target_gain=ab_span_amp_gain, monitor_mode='in')
-        spans_ab.append(Span(length=length_ab_spans, amp=f'amp_ab_{s}', **params))
-
-        """ *** Taking this out, now that we have ROADMs!
-        if s != tap_loc:
-            spans_ab.append(Span(length=length_ab_spans, amp=f'amp_ab_{s}', **params))
+        # General-purpose span for given number of spans on the Alice to Bob link
+        spans_ab = [] #[Span(length=length_ab_spans, amp=amp_ab)] -- Start empty so that first can be tap, if spec'd
         
-        # For the spec'd Willie location, put another of the same amp, but named 'tap'
-        elif s == tap_loc:
-            spans_ab.append(Span(length=length_ab_spans, amp='tap', 
-                target_gain=ab_span_amp_gain, monitor_mode='in'))
-        """
 
-    # End each span with a length of fiber with no amp:
-    spans_ab.append(Span(length=length_ab_spans))
+        for s in range(1, num_ab_spans + 1):
 
-    print('\n*** span_ab (the span(s) between all ROADMs on the A to B line:\n', spans_ab, '\n')
+            params = dict(target_gain=ab_span_amp_gain, monitor_mode='in')
+            spans_ab.append(Span(length=length_ab_spans, amp=f'amp_ab_{p}_{s}', **params))
 
-    # The single boost amp at the start of the spans between ROADMs on the A to B line
-    boost_ab = net.add_amplifier('boost_ab', target_gain=span_ab_boostamp_gain, boost=True, monitor_mode='out')
-    
+            """ *** Taking this out, now that we have ROADMs and a splitter for the tap!
+            if s != tap_loc:
+                spans_ab.append(Span(length=length_ab_spans, amp=f'amp_ab_{s}', **params))
+            
+            # For the spec'd Willie location, put another of the same amp, but named 'tap'
+            elif s == tap_loc:
+                spans_ab.append(Span(length=length_ab_spans, amp='tap', 
+                    target_gain=ab_span_amp_gain, monitor_mode='in'))
+            """
+
+        # End each span with a length of fiber with no amp:
+        spans_ab.append(Span(length=length_ab_spans))
+        # debug ***
+        #print('\n*** span_ab (the span(s) between all ROADMs on the A to B line):\n', spans_ab, '\n')
+
+        # Return a span that's unique for each call to this function
+
+        return spans_ab
+
+
+
+    def boost_amp_ab(gain, count):
+        "Create a boost amp to go at the start of the spans between ROADMs on the A to B line"
+
+        name = 'boost_ab_' + f'{count}'
+        boostamp = net.add_amplifier(name, target_gain=gain, boost=True, monitor_mode='out')
+        
+        return boostamp
+
 
     # ================ LINKING the added ROADMs on the A to B line ===============================
     # ================ And incorporating the splitter (Willie's tap) location
 
-    # New splitter element:    *** import and confirm *******************************************************
+    # New splitter element
     tap = net.add_node('tap', cls=Splitter, split={LINEOUT:99, 2:1})
-    #tap = net.add_roadm('tap', monitor_mode='in')
-    # tap_loc: 0 = right after r1. n = after r_ab_[n]. 
+    
+    # tap_loc = n means that tap is after the span coming from r_ab_(n+1). 
+    # tap_loc = 0 means it's after the span after r1 (not r_ab_1). 
+
+    # Counter used to give every boost amp a unique name
+    b = 0
+
+    # Counter used to give every span_ab a unique name
+    p = 0
+
+    # -- CONDITIONS FOR WHERE THE TAP GOES --
 
     # If tap is after r1 (at the end of the span after r1)
     if tap_loc == 0:
 
+        b += 1
+        p += 1
         # Link r1 to tap
         net.add_link(r1, tap, src_out_port=LINEOUT, dst_in_port=LINEIN, 
-        boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
+        
+        b += 1
+        p += 1
         # Then tap to the first added ROADM, with no span after the tap
         net.add_link(tap, r_ab[0], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-            boost_amp=boost_ab, spans=[Span(0.001)] )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=[Span(0.001)] )
 
         # Now link the rest of any added ROADMs together
         for r in range(0, num_ab_roadms-1):
+            b += 1
+            p += 1
             # e.g. for num_ab_roadms=5, this does 0, 1, 2, 3. We do last ROADM after this loop.
             net.add_link(r_ab[r], r_ab[r+1], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-                boost_amp=boost_ab, spans=spans_ab )
-        
+                boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+                spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
+                
+        b += 1
+        p += 1
         # Finally, link the last of the added ROADMs to r2 (Bob)
         net.add_link(r_ab[num_ab_roadms-1], r2, src_out_port=LINEOUT, dst_in_port=LINEIN,
-            boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
 
     # If the tap isn't first, and also isn't last on the line of ROADMs (which would be right before r2)
     elif tap_loc < num_ab_roadms:
+        b += 1
+        p += 1
         # First link r1 to the first added ROADM (with span_ab in between)
         net.add_link(r1, r_ab[0], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-            boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
 
         # Now link the rest of any added ROADMs together, and the tap, wherever it's located
         for r in range(0, num_ab_roadms-1):
@@ -238,38 +280,60 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
             
             # If next one isn't tap, then link current and next
             if r+1 != tap_loc:
+                b += 1
+                p += 1
                 # e.g. for tap_loc=3, tap will go after r3: link(r_ab[2], tap) and link(tap, r_ab[3])
                 net.add_link(r_ab[r], r_ab[r+1], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-                    boost_amp=boost_ab, spans=spans_ab )
+                    boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+                    spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
         
             # Otherwise, link the current r_ab to the tap, and then the tap to the next r_ab
             elif r+1 == tap_loc:
+                b += 1
+                p += 1
                 net.add_link(r_ab[r], tap, src_out_port=LINEOUT, dst_in_port=LINEIN, 
-                    boost_amp=boost_ab, spans=spans_ab )
-
+                    boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+                    spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
+                b += 1
+                p += 1
                 net.add_link(tap, r_ab[r+1], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-                    boost_amp=boost_ab, spans=[Span(0.001)] )
+                    boost_amp=boost_amp_ab(span_ab_boostamp_gain, b),
+                    spans=[Span(0.001)] )
 
         # Now the last added ROADM to r2. Tap last is handled in the next if statement.
+        b += 1
+        p += 1
         net.add_link(r_ab[num_ab_roadms-1], r2, src_out_port=LINEOUT, dst_in_port=LINEIN, 
-            boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
 
     # Willie tap is after the last added ROADM (meaning right before r2)
     elif tap_loc == num_ab_roadms:
+        b += 1
+        p += 1
         # First link r1 to the first added ROADM (with span_ab in between)
         net.add_link(r1, r_ab[0], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-            boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
 
         for r in range(0, num_ab_roadms-1):
+            b += 1
+            p += 1
             # So for num=5: this does 0, 1, 2, 3 (ending on r_ab_4), and we do last ROADM (5th) after this loop
             net.add_link(r_ab[r], r_ab[r+1], src_out_port=LINEOUT, dst_in_port=LINEIN, 
-                boost_amp=boost_ab, spans=spans_ab )
-
+                boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+                spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
+        b += 1
+        p += 1
         net.add_link(r_ab[num_ab_roadms-1], tap, src_out_port=LINEOUT, dst_in_port=LINEIN,
-            boost_amp=boost_ab, spans=spans_ab )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=spans_ab(num_ab_spans, length_ab_spans, ab_span_amp_gain, p) )
 
+        b += 1
+        p += 1
         net.add_link(tap, r2, src_out_port=LINEOUT, dst_in_port=LINEIN,
-            boost_amp=boost_ab, spans=[Span(0.001)] )
+            boost_amp=boost_amp_ab(span_ab_boostamp_gain, b), 
+            spans=[Span(0.001)] )
                 
 
     """
@@ -292,8 +356,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
 
     # Background traffic add links at r0
     for i in range(TXCOUNT):
-        net.add_link(t0, r0, src_out_port=TX+i, dst_in_port=ADD+i,
-                     spans=[Span(1*m)])
+        net.add_link(t0, r0, src_out_port=TX+i, dst_in_port=ADD+i, spans=[Span(1*m)])
 
     # Local add link at r1 (Alice) and drop link at r2 (Bob)
     net.add_link(t1, r1, src_out_port=TX, dst_in_port=ADD, spans=[Span(1*m)])
@@ -579,7 +642,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             # Re-running this creates identical network, unless we add randomness
         
             # *****************************************************************************/////////////////
-            plotnet(net)
+            #plotnet(net)  Don't leave this here normally; everything will lag
 
             print('*** Configuring latest Alice digital twin network...')
             configroadms(net, num_ab_roadms)
@@ -594,7 +657,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             #amp_ab = net.name_to_node['amp_ab_1']
             #print('---------amp_ab OSNR list: ', amp_ab.monitor.get_list_osnr())
 
-            # OSNR at Willie's tap for Alice's channel only
+            # OSNR at Willie's tap (the terminal connected to it!) for Alice's channel only
             tap = net.name_to_node['t3']
             willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
             print('\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list)
@@ -656,8 +719,8 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         configterminals(net)
 
         ##print('*** Monitoring signal and noise power\n')
-        # OSNR at Willie's tap for Alice's channel only
-        tap = net.name_to_node['tap']
+        # OSNR at Willie's tap (the terminal connected to it!) for Alice's channel only
+        tap = net.name_to_node['t3']
         willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
         print('\n\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list, '\n\n\n')
         willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
@@ -694,7 +757,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # by lowering the amp gain slightly and attenuating Willie's
         # signals appropriately.
         
-        tap = net.name_to_node['tap']
+        tap = net.name_to_node['t3']
         
         print("*** Input signals at tap (Willie)\n*** ***(NON-ATTENUATED!!):")
         sigwatts = getsignalwatts(tap)
@@ -786,7 +849,11 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
 def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin, 
     nRE_list, bobsbits_list, label_strings, time_per_mode):
-    "Plots only the result data (vs. number of pulses). Plots are finished in the other function."
+    "Plots the result data (vs. number of pulses) and the theoretical fits.\
+    Plots are finished in the other function."
+
+    # Calculate the covert capacity for the current run
+    L = calcL(modes_span, bobsbits_list)
 
     # Label for the legend in the plots. We can choose which of the three label strings to use.
     label = 'Simulated: ' + label_strings[0]
@@ -797,14 +864,20 @@ def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin,
     # Alice's best powers
     plt.figure(1)
     plt.plot(modes_span, power_a_test_list, label=label)
+    plt.plot(modes_span, L*np.log(1/np.sqrt(modes_span)), linestyle='--', 
+        label='Theoretical: (L/2)log(n)')
 
     # Willie's actual REs across the modes Alice found the best powers for
     plt.figure(2)
     plt.plot(modes_span, nRE_list, label=label)
+    plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
+        label='Theoretical: L * sqrt(n)')
 
     # Bob's covert bits
     plt.figure(3)
     plt.plot(modes_span, bobsbits_list, label=label)
+    plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
+        label='Theoretical: L * sqrt(n)')
     
     # Alice covert bitrate to Bob
     transmit_time_ms = modes_span * time_per_mode * 1000  # Total transmission times across the mode numbers
@@ -816,6 +889,7 @@ def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin,
     bob_bitrate_list_kbit = (bobsbits_list/(transmit_time_ms/1000))/1000  # kbits/s from the second "/1000"
     plt.figure(4)
     plt.plot(modes_span, bob_bitrate_list_kbit, label=label)
+    plt.plot(modes_span, L/np.log(modes_span), linestyle='--', label='Theoretical: L/log(n)')
 
     return None
 
@@ -824,20 +898,16 @@ def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin,
 def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode, bobsbits_list):
     "Complete the 4 plots in plotrunresults(), adding labels, titles, and the theoretical curves."
 
-    L = calcL(modes_span, bobsbits_list)
-
     # Label for the x-axis of all plots
     xlabel = 'Optical Pulses in a Transmission (All time slots filled)'
     # Label for the part of the plot titles after the dependent variable (so it's easy to change all of them)
     plottitle_vs = ' vs. Optical Pulses in a Transmission (All slots filled)'
 
     plt.figure(1)
-    plt.plot(modes_span, L*np.log(1/np.sqrt(modes_span)), 'k', linestyle='--', 
-        label='---(TODO)---  L * log(1/sqrt(n)) = -(L/2)log(n)')
     plottitle = 'Alice Optimal Power [dBm]'
     plottitle += plottitle_vs
     plottitle += f"\nRE safety margin: {RE_margin*100:.1f}%"
-    plottitle += '\n' + label_strings[1] + '     ' + label_strings[2]
+    plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.ylabel("Alice Optimal Power [dBm]")
     plt.xlabel(xlabel)
@@ -850,13 +920,11 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
     # Alice's budget for the nRE (constant)
     plt.plot(modes_span, np.ones(len(modes_span))*nRE_budget, 'b', 
         linestyle='--', label=f'Alice nRE Budget: {nRE_budget:.6}')
-    # Theoretical nRE ..= Lsqrt(n) ?
-    plt.plot(modes_span, L*np.sqrt(modes_span), 'k', linestyle='--', label='---(TODO): theoret. nRE. L * sqrt(n)?')
     plt.plot(modes_span, np.ones(len(modes_span))*nRE_budget*(1-RE_margin) , 'b', linestyle=':')
     plottitle = '\nRelative Entropy at Willie [bits]'
     plottitle += plottitle_vs
     plottitle += f"\nRE safety margin: {RE_margin*100:.1f}%"
-    plottitle += '\n' + label_strings[1] + '     ' + label_strings[2]
+    plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.ylabel("Total RE at Willie [bits]")
     plt.xlabel(xlabel)
@@ -866,10 +934,9 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
 
 
     plt.figure(3)
-    plt.plot(modes_span, L*np.sqrt(modes_span), 'k', linestyle='--', label='---(TODO)--- L * sqrt(n)')
     plottitle = 'Covert Bits Received by Bob'
     plottitle += plottitle_vs
-    plottitle += '\n' + label_strings[1] + '     ' + label_strings[2]
+    plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.ylabel("Covert Bits [bits]")
     plt.xlabel(xlabel)
@@ -878,12 +945,10 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
 
 
     plt.figure(4)
-    plt.plot(modes_span, L/np.log(modes_span), 'k', linestyle='--', label='---(TODO) bitrate: O(L * 1/log(n))??')
-
     plottitle = 'Covert Bit Rate to Bob [kbits/s]'
     plottitle += plottitle_vs
     plottitle += '\nPulse Duration: ' + f'{time_per_mode*10**9:.2f} ns'
-    plottitle += '\n' + label_strings[1] + '     ' + label_strings[2]
+    plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     
     plt.ylabel("Covert Bit Rate from A to B [kbits/s]")
@@ -909,7 +974,7 @@ def surfaceplot_vs_willie_loc(num_ab_spans, ab_span_amp_gain, modes_span, zlabel
     pulses, willie_locs = np.meshgrid(modes_span, list(range(1, num_ab_spans+1)))
     surf1 = ax.plot_surface(pulses, willie_locs, np.array(zdata), cmap=cm.coolwarm)
     plt.xlabel('Optical Pulses in a Transmission (All slots filled)')
-    plt.ylabel('Willie Amp Number in AB Span')
+    plt.ylabel('Willie Tap Position')
     plt.yticks(np.arange(1, num_ab_spans + 1, 1.0))
     ax.set_zlabel(zlabel)
     # plt.colorbar(surf1, shrink=0.5)
@@ -924,23 +989,12 @@ def calcL(x, b):
     by linearly fitting to inputted Bob's bits, B. \
     B = L*sqrt(n) --> log(B) = log(L) + (1/2)log(n) "
 
-    # Exponentiate the output to acheive the equation above...........
-    b = 10**(b)
+    # Linear regression to log2
+    fit = np.polyfit(np.log2(x), b, 1)
 
-    x = np.array(x)
-    b = np.array(b)
+    intercept = fit[1]
 
-    # Simple linear fit to b
-    xmean = x.mean()
-    bmean = b.mean()
-
-    slope_top = ((x - xmean) * (y - bmean)).sum()
-    slope_bot = ((x - xmean)**2).sum()
-    slope = slope_top / slope_bot
-
-    intercept = bmean - (slope * xmean)
-
-    L = 0.01
+    L = 2**intercept
 
     print(f'\nCovert capacity, L, calculated: {L:.6f}\n')
 
@@ -958,25 +1012,31 @@ def calcL(x, b):
 # ===============================================================================================================
 
 # Toggles
+
 update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
-plot_willie_signals = 0
+plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
+
+plot_willie_signals = 0  # Plots of individual signals (we don't use much)
 plot_r2_signals     = 0
 plot_t2_signals     = 0
-plot_results        = 0  # Toggles the overall result plots (the whole point of this simulation)
 
 # ________________________________________________________________________
 # VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
 
-length_bga      = 5.0*km  # ro -- r1 span; Background to Alice's ROADM
-length_ab_spans = 5.0*km  # Alice's ROADM to Willie's tap
+length_bga      = 15.0*km  # ro -- r1 span; Background to Alice's ROADM
+length_ab_spans = 9.0*km  # Alice's ROADM to Willie's tap
 
 # length_wb       = 10.1*km  # Willie's tap to Bob's ROADM -- Willie's tap can be anywhere, so not using this?
 
-num_ab_spans        = 3        # Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
+num_ab_spans        = 2        # Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
                            # Significant impact on runtime. With ~10 mode numbers, maybe 3s times this value.
+print('num_ab_spans: ', num_ab_spans)
+
 ab_span_amp_gain= 3*dBm    # Gain of the repeated amps on the AB span
+print('ab_span_amp_gain: ', ab_span_amp_gain, 'dB')
 
 span_ab_boostamp_gain = 3*dB  # Gain on the initial boost amp on the AB spans between any ROADMs.
+print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_gain, 'dB')
 
 
 # ********************************************************** Willie's location in the Alice to Bob span set 
@@ -986,7 +1046,7 @@ tap_loc = 1  # Overwritten in for-loop below
 
 
 # Number of ROADMs on the Alice to Bob link
-num_ab_roadms      = 3
+num_ab_roadms      = 4
 
 # Duration of the pulses that ALice would hypothetically send. This simulation doesn't model time.
 time_per_mode = 10e-9  # 10ns pulses (?)
@@ -996,7 +1056,7 @@ time_per_mode = 10e-9  # 10ns pulses (?)
 # ===============================================================================================================
 # PARAMETER CHECKS before running; abort if anything is set nonsensically
 
-if (tap_loc > num_ab_spans) or (tap_loc < 0):
+if (tap_loc > num_ab_roadms) or (tap_loc < 0):
     sys.exit('\n\n***ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
 
 if (TXCOUNT != 10) or (CH5ALICE != 5):
@@ -1014,16 +1074,20 @@ if (TXCOUNT != 10) or (CH5ALICE != 5):
 # We can choose how to use the three label strings in the plot function based on what we're testing.
 label_strings    = ['','','']
 # label_strings[0] = f'Tap at amp {tap_loc} of {num_ab_spans}'
-label_strings[1] = f'Length of each AB span: {length_ab_spans}km'
-label_strings[2] = f'AB span amp gains: {ab_span_amp_gain}dB'
+label_strings[1] = f'Distance between ROADMs: {length_ab_spans*num_ab_spans}km'
+label_strings[2] = f'Gain between ROADMs: {span_ab_boostamp_gain + ab_span_amp_gain*num_ab_spans}dB'
 
 all_alice_powers = []
 all_willie_nREs  = []
 all_bob_bits     = []
 
-for tap_loc in range(2, 3):
+for tap_loc in range(3, 5):
 
-    label_strings[0] = f'Willie at amp {tap_loc} of {num_ab_spans}'
+    if tap_loc != 0:
+        label_strings[0] = f'Tap after ROADM {tap_loc} of {num_ab_roadms}'
+    elif tap_loc == 0:
+        label_strings[0] = f'Tap before first ROADM'
+
 
     # Getting all the outputs of run(), for each of these topology-level iterations
     modes_span, power_a_test_list, nRE_budget, RE_margin, nRE_list, \
@@ -1052,7 +1116,7 @@ if plot_results:
 zlabel = 'Alice Optimal Power [dBm]'
 #surfaceplot_vs_willie_loc(num_ab_spans, ab_span_amp_gain, modes_span, zlabel, zdata=all_alice_powers)
 
-
+print('\n')
 if update_net_plot: 
     # Create and save the topology drawing/schematic (covertsim.png)
     # of the ** most recent ** network ("net") from the most recent call to run()
@@ -1061,14 +1125,7 @@ else:
     print("\n*** *** Topology plot not up to date! (Toggled off)\n")
 
 
-print(' ------ Boost amp gain (amps after each ROADM on AB line):', span_ab_boostamp_gain, 'dB')
-
-
 print('\n*** Done!\n\n')
 print("*** NOTES:")
-print("\t-Willie tap element isn't a splitter yet. No attenuation.")
-print("\t-Willie is currently the input to one of the amps on the AB link. This amp has the same gain as the others.")
 print("\t-Changing # of bg channels from 10 will break things \
     \n\t because ch5 for Alice is indexed explicitly as [4] at Willie OSNRs")
-
-
