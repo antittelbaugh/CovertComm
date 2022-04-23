@@ -70,7 +70,7 @@ new power = old power + or - random times given percent of old power
 
 # Network topology
 def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans, 
-    ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain):
+    ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta):
     """We model a simple network for covert communication.
        Background traffic originates at t0 and is multiplexed
        by r0, amplified by boost0, and received at r1's line input.
@@ -119,17 +119,17 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     # Background traffic generator
     transceivers = [Transceiver(i,f'tx{i}',0*dBm)
                     for i in range(1, TXCOUNT+1)]
-    t0 = net.add_lt('t0', transceivers=transceivers )
+    t0 = net.add_lt('Bkgrnd', transceivers=transceivers )
     r0 = net.add_roadm('r0', monitor_mode='out' )
 
     # Alice & Bob's respective terminals and roadms
     # Note low transmit power for Alice (Bob's tx power isn't used)
-    t1 = net.add_lt('t1', transceivers=[Transceiver(1,'tx1', power_a)],
+    t1 = net.add_lt('Alice', transceivers=[Transceiver(1,'tx1', power_a)],
                     monitor_mode='out')
-    t2 = net.add_lt('t2', transceivers=[Transceiver(1,'tx1',0*dBm)],
+    t2 = net.add_lt('Bob', transceivers=[Transceiver(1,'tx1',0*dBm)],
                     monitor_mode='in')
 
-    t3 = net.add_lt('t3', transceivers=[Transceiver(1,'tx1',0*dBm)],
+    t3 = net.add_lt('Willie', transceivers=[Transceiver(1,'tx1',0*dBm)],
                     monitor_mode='in')
 
     r1 = net.add_roadm('r1', monitor_mode='out')
@@ -218,8 +218,18 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     # ================ LINKING the added ROADMs on the A to B line ===============================
     # ================ And incorporating the splitter (Willie's tap) location
 
-    # New splitter element
-    tap = net.add_node('tap', cls=Splitter, split={LINEOUT:99, 2:1})
+
+    # Percentage input power lost due to absorption at Willie's tap.
+    tap_abs = 100 - eta - not_eta
+    print(f'\nPercentage input power lost due to absorption at Willie\'s tap: {tap_abs:.4f}%')
+    
+
+    # Now recalculate the given eta, % of input power that makes it through Willie's tap
+    eta = (eta/100) * (100 - tap_abs)  # [%]
+
+    # Splitter element. LINEOUT is port that continues on the line. Port 2 goes to Willie (t3).
+    # split is a dictionary with ports mapped to percentage power passed (eta and not_eta).
+    tap = net.add_node('tap', cls=Splitter, split={LINEOUT:eta, 2:not_eta})
     
     # tap_loc = n means that tap is after the span coming from r_ab_(n+1). 
     # tap_loc = 0 means it's after the span after r1 (not r_ab_1). 
@@ -410,7 +420,11 @@ def configroadms(net, num_ab_roadms):
 
 def configterminals(net):
     "Configure terminals and transceivers"
-    t0, t1, t2, t3 = [net.name_to_node[f't{i}'] for i in (0, 1, 2, 3)]
+    #t0, t1, t2, t3 = [net.name_to_node[f't{i}'] for i in (0, 1, 2, 3)]
+    t0 = net.name_to_node['Bkgrnd']
+    t1 = net.name_to_node['Alice']
+    t2 = net.name_to_node['Bob']
+    t3 = net.name_to_node['Willie']
 
     # Configure background transmitters
     for i in range(TXCOUNT):
@@ -558,7 +572,7 @@ def plotsignals(node, port=None):
 # Run tests ====================================================================================================
 def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals, 
     length_bga, num_ab_spans, length_ab_spans, ab_span_amp_gain, tap_loc, 
-    num_ab_roadms, span_ab_boostamp_gain):
+    num_ab_roadms, span_ab_boostamp_gain, eta, not_eta):
 
     "This function contains the entire process of Alice creating digital twin networks and \
     finding the optimal (highest permitted by RE budget) powers for a given selection of   \
@@ -579,10 +593,10 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     RE_margin  = 0.05
     
     # Arbitrary initial test power
-    power_a_test_init   = -85*dBm
+    power_a_test_init   = -90*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 0.5*dBm
+    power_a_stepsize    = 0.25*dBm
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
     max_twin_tests   = 150
@@ -590,7 +604,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
     # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 12
+    modes_to_test    = 3
     
     # Number of modes Alice will test and transmit up to
     max_modes  = 10000
@@ -638,7 +652,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             
             print('*** Creating latest Alice digital twin network...')
             net = createnetwork(power_a_test, length_bga, num_ab_spans, length_ab_spans, 
-                ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain)
+                ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta)
             # Re-running this creates identical network, unless we add randomness
         
             # *****************************************************************************/////////////////
@@ -650,7 +664,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
             #    * * * 
             path_ch5 = SignalTracing.channel_paths(
-                node=net.name_to_node['t1'], channel=CH5ALICE)  #, channel=CH5ALICE)
+                node=net.name_to_node['Alice'], channel=CH5ALICE)  #, channel=CH5ALICE)
             print('\n *** *** *** PATH for CH5ALICE from t1: ', path_ch5, '\n\n')
 
             # Debugging: check OSNRs at an amp_ab amp. Tap replaces one, so key error if you try to check that one.
@@ -658,8 +672,8 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             #print('---------amp_ab OSNR list: ', amp_ab.monitor.get_list_osnr())
 
             # OSNR at Willie's tap (the terminal connected to it!) for Alice's channel only
-            tap = net.name_to_node['t3']
-            willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
+            willie_terminal = net.name_to_node['Willie']
+            willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
             print('\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list)
             willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
 
@@ -710,7 +724,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # Create network
         print('\n*** Creating network')
         net = createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans, 
-            ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain)
+            ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta)
         # Re-running this does not create a new network, without added randomness
 
         # Configure network
@@ -720,8 +734,8 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
         ##print('*** Monitoring signal and noise power\n')
         # OSNR at Willie's tap (the terminal connected to it!) for Alice's channel only
-        tap = net.name_to_node['t3']
-        willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
+        willie_terminal = net.name_to_node['Willie']
+        willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
         print('\n\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list, '\n\n\n')
         willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
 
@@ -733,7 +747,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         print(f"Budgeted Total Relative Entropy at Willie: {nRE_budget:.6f}")
         print(f"After {RE_margin*100:.1f}% safety margin: {nRE_budget*(1-RE_margin):.6f}\n")
 
-        t1 = net.name_to_node['t1']  # Looking up node by name
+        t1 = net.name_to_node['Alice']  # Looking up node by name
         p_a_monitor_dBm = getsignalwatts(t1)
         print("*** Transmit powers out of t1:")
         printdbm(p_a_monitor_dBm)
@@ -757,15 +771,16 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # by lowering the amp gain slightly and attenuating Willie's
         # signals appropriately.
         
-        tap = net.name_to_node['t3']
+        # Again, just in case
+        willie_terminal = net.name_to_node['Willie']
         
-        print("*** Input signals at tap (Willie)\n*** ***(NON-ATTENUATED!!):")
-        sigwatts = getsignalwatts(tap)
+        print("*** Input signals at Willie terminal from tap\n*** ***(NON-ATTENUATED!!):")
+        sigwatts = getsignalwatts(willie_terminal)
         # Print all of Willie's received signals
         printdbm(sigwatts)
         
-        # OSNR at Willie's tap for Alice's channel only
-        willie_input_osnr_dB_list = tap.monitor.get_list_osnr()
+        # OSNR at Willie's tap for Alice's channel only (input at his terminal, linked to tap)
+        willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
         #print("\nwillie osnr list: \n", willie_input_osnr_dB_list)
         willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
         print(f"\nWillie OSNR [dB] for ch5 (Alice): {willie_input_osnr_alice_db:.4f}")  # Alice: 2nd spot in tuple in ch5. *******How do this generally?!
@@ -782,7 +797,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         
         # Plot all signals received by Willie
         if plot_willie_signals: 
-            plotsignals(tap, 0)
+            plotsignals(willie_terminal, 0)
 
         print("\nAdding to list the nRE of this run: ", nRE)
         nRE_list.append(nRE)  # Collect the REs at Willie across the modes Alice found the best power for.
@@ -800,7 +815,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             plotsignals(r2, LINEIN)
 
         # Monitor Bob's received signal (t2 gets only Alice's channel)
-        t2 = net.name_to_node['t2']
+        t2 = net.name_to_node['Bob']
         print("*** Signals at t2 (Bob, receiving only Alice's channel):")
         sigwatts = getsignalwatts(t2, RX)
         printdbm(sigwatts)
@@ -865,19 +880,21 @@ def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin,
     plt.figure(1)
     plt.plot(modes_span, power_a_test_list, label=label)
     plt.plot(modes_span, L*np.log(1/np.sqrt(modes_span)), linestyle='--', 
-        label='Theoretical: (L/2)log(n)')
+        label=f'Theoretical: (L/2)log(n), L = {L:.4f}')
 
-    # Willie's actual REs across the modes Alice found the best powers for
+    # Willie's actual nRE across the modes Alice found the best powers for
     plt.figure(2)
     plt.plot(modes_span, nRE_list, label=label)
-    plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
-        label='Theoretical: L * sqrt(n)')
+    plt.ylim(0.8*min(nRE_list), 1.1*nRE_budget) # Let's always plot from 0 to the budget
+    # 4/21/22: No theoretical curve for RE; it stays constant.
+    #plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
+    #    label=f'Theoretical: L * sqrt(n), L = {L:.4f}')
 
     # Bob's covert bits
     plt.figure(3)
     plt.plot(modes_span, bobsbits_list, label=label)
     plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
-        label='Theoretical: L * sqrt(n)')
+        label=f'Theoretical: L * sqrt(n), L = {L:.4f}')
     
     # Alice covert bitrate to Bob
     transmit_time_ms = modes_span * time_per_mode * 1000  # Total transmission times across the mode numbers
@@ -889,7 +906,9 @@ def plotrunresults(modes_span, power_a_test_list, nRE_budget, RE_margin,
     bob_bitrate_list_kbit = (bobsbits_list/(transmit_time_ms/1000))/1000  # kbits/s from the second "/1000"
     plt.figure(4)
     plt.plot(modes_span, bob_bitrate_list_kbit, label=label)
-    plt.plot(modes_span, L/np.log(modes_span), linestyle='--', label='Theoretical: L/log(n)')
+    plt.plot(modes_span, L/np.sqrt(modes_span), linestyle='--',
+        label=f'Theoretical: L/sqrt(n), L = {L:.4f}')
+    #plt.ylim(0, 2*bob_bitrate_list_kbit[2])  # Feel free to change, as needed
 
     return None
 
@@ -915,12 +934,13 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
     plt.legend()
     plt.grid(True)
 
+    # Willie nRE
     plt.figure(2)
-    plt.ylim(0, 1.1*nRE_budget) # Let's always plot from 0 to the budget
     # Alice's budget for the nRE (constant)
     plt.plot(modes_span, np.ones(len(modes_span))*nRE_budget, 'b', 
         linestyle='--', label=f'Alice nRE Budget: {nRE_budget:.6}')
-    plt.plot(modes_span, np.ones(len(modes_span))*nRE_budget*(1-RE_margin) , 'b', linestyle=':')
+    plt.plot(modes_span, np.ones(len(modes_span))*nRE_budget*(1-RE_margin) , 'b', 
+        linestyle=':', label=f'Alice nRE Budget - Margin: {(1- RE_margin)*nRE_budget:.6}')
     plottitle = '\nRelative Entropy at Willie [bits]'
     plottitle += plottitle_vs
     plottitle += f"\nRE safety margin: {RE_margin*100:.1f}%"
@@ -950,7 +970,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
     plottitle += '\nPulse Duration: ' + f'{time_per_mode*10**9:.2f} ns'
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
-    
+    plt.xscale('log')
     plt.ylabel("Covert Bit Rate from A to B [kbits/s]")
     plt.xlabel(xlabel)
     plt.legend()
@@ -962,20 +982,22 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
     return None
 
 
-def surfaceplot_vs_willie_loc(num_ab_spans, ab_span_amp_gain, modes_span, zlabel, zdata):
+def surfaceplot_vs_tap_loc(tap_loc_start, tap_loc_end, num_ab_roadms, modes_span, zlabel, zdata):
     "Make a surface plot of any of the results (lists vs. # pulses) against Willie locations"
 
     # Surface plot for comparison across configurations
     plt.figure(5)
     plottitle = zlabel + ' vs. Optical Pulses in a Transmission (All slots filled)'
-    plottitle += ' vs. Willie Position in AB Span'
-    plt.title(plottitle + f'\nSpan amp gains: {ab_span_amp_gain:.1f}dB')
+    plottitle += ' vs. Willie Tap Location in Alice-Bob Span'
+    plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
+    plt.title(plottitle)
     ax = plt.axes(projection='3d')
-    pulses, willie_locs = np.meshgrid(modes_span, list(range(1, num_ab_spans+1)))
+    willie_locs_range = range(tap_loc_start, tap_loc_end+1)
+    pulses, willie_locs = np.meshgrid(modes_span, list(willie_locs_range))
     surf1 = ax.plot_surface(pulses, willie_locs, np.array(zdata), cmap=cm.coolwarm)
     plt.xlabel('Optical Pulses in a Transmission (All slots filled)')
     plt.ylabel('Willie Tap Position')
-    plt.yticks(np.arange(1, num_ab_spans + 1, 1.0))
+    plt.yticks(np.arange(1, num_ab_roadms + 1, 1.0))
     ax.set_zlabel(zlabel)
     # plt.colorbar(surf1, shrink=0.5)
     plt.show()
@@ -983,20 +1005,29 @@ def surfaceplot_vs_willie_loc(num_ab_spans, ab_span_amp_gain, modes_span, zlabel
     return None
 
 
-def calcL(x, b):
+def calcL(n, B):
     "Inputs should always be modes and Bob's bits. \
     Calculate the covert capacity, L, used to scale theoretical curves in plots,\
     by linearly fitting to inputted Bob's bits, B. \
     B = L*sqrt(n) --> log(B) = log(L) + (1/2)log(n) "
 
-    # Linear regression to log2
-    fit = np.polyfit(np.log2(x), b, 1)
+    # Take logs (any base) of inputs
+    logn = np.log(n)
+    logB = np.log(B)
 
-    intercept = fit[1]
 
-    L = 2**intercept
+    # Design matrix
+    X = np.vstack((np.ones(len(logn)), logn)).T
 
-    print(f'\nCovert capacity, L, calculated: {L:.6f}\n')
+    # Simple linear regression to log(n)
+    LSparams = np.linalg.inv(X.T.dot(X)).dot(X.T).dot(logB)
+    # Also works and gives same result: np.polyfit(np.log(n), B, 1)
+
+    intercept = LSparams[0]
+
+    L = np.exp(intercept)
+
+    print(f'\nMost recent covert capacity, L: {L:.6f}\n')
 
     return L
 
@@ -1005,7 +1036,7 @@ def calcL(x, b):
 # END OF FUNCTION DEFINITIONS
 # ===============================================================================================================
 
-
+starttime = datetime.datetime.now()
 
 # ===============================================================================================================
 # S E T T I N G S
@@ -1013,7 +1044,7 @@ def calcL(x, b):
 
 # Toggles
 
-update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
+update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
 plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
 
 plot_willie_signals = 0  # Plots of individual signals (we don't use much)
@@ -1039,14 +1070,23 @@ span_ab_boostamp_gain = 3*dB  # Gain on the initial boost amp on the AB spans be
 print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_gain, 'dB')
 
 
-# ********************************************************** Willie's location in the Alice to Bob span set 
-# Given integer is the amp number in the overall span. 
-# Willie's OSNR will be taken from the input to this amp. 
-tap_loc = 1  # Overwritten in for-loop below
-
+# ************************* Willie's location in the Alice to Bob span **********************************
+# 0 (before first added ROADM) to n, the number of added intermediate ROADMs. Doesn't have to start at 0. 
+# tap_loc = 1
+# Start and end Willie tap locations for the whole test to be run over
+tap_loc_start = 3
+tap_loc_end   = 4
 
 # Number of ROADMs on the Alice to Bob link
 num_ab_roadms      = 4
+
+
+# Percentage of input power that makes it through Willie's tap to the next ROADM
+eta     = 97  # [%]
+# Percentage of input power Willie collects from his tap
+not_eta = 2   # [%]
+# Could make these random...^
+
 
 # Duration of the pulses that ALice would hypothetically send. This simulation doesn't model time.
 time_per_mode = 10e-9  # 10ns pulses (?)
@@ -1056,12 +1096,14 @@ time_per_mode = 10e-9  # 10ns pulses (?)
 # ===============================================================================================================
 # PARAMETER CHECKS before running; abort if anything is set nonsensically
 
-if (tap_loc > num_ab_roadms) or (tap_loc < 0):
-    sys.exit('\n\n***ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
+if (tap_loc_end > num_ab_roadms) or (tap_loc_start < 0):
+    sys.exit('\n\n*** ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
 
 if (TXCOUNT != 10) or (CH5ALICE != 5):
-    sys.exit('\n\n***ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
+    sys.exit('\n\n*** ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
 
+if (eta + not_eta) > 100:
+    sys.exit('\n\n*** ABORT: Eta and (1-eta) can be < 100, but not more...\n\n')
 
 
 
@@ -1074,14 +1116,14 @@ if (TXCOUNT != 10) or (CH5ALICE != 5):
 # We can choose how to use the three label strings in the plot function based on what we're testing.
 label_strings    = ['','','']
 # label_strings[0] = f'Tap at amp {tap_loc} of {num_ab_spans}'
-label_strings[1] = f'Distance between ROADMs: {length_ab_spans*num_ab_spans}km'
+label_strings[1] = f'Distance between ROADMs: {length_ab_spans*(num_ab_spans+1)}km'
 label_strings[2] = f'Gain between ROADMs: {span_ab_boostamp_gain + ab_span_amp_gain*num_ab_spans}dB'
 
 all_alice_powers = []
 all_willie_nREs  = []
 all_bob_bits     = []
 
-for tap_loc in range(3, 5):
+for tap_loc in range(tap_loc_start, tap_loc_end + 1):
 
     if tap_loc != 0:
         label_strings[0] = f'Tap after ROADM {tap_loc} of {num_ab_roadms}'
@@ -1090,11 +1132,12 @@ for tap_loc in range(3, 5):
 
 
     # Getting all the outputs of run(), for each of these topology-level iterations
-    modes_span, power_a_test_list, nRE_budget, RE_margin, nRE_list, \
-    bobsbits_list, net = run(update_net_plot, \
-        plot_willie_signals, plot_r2_signals, plot_t2_signals, \
-        length_bga, num_ab_spans, length_ab_spans, ab_span_amp_gain, tap_loc, \
-        num_ab_roadms, span_ab_boostamp_gain)
+    modes_span, power_a_test_list, nRE_budget, RE_margin, nRE_list, bobsbits_list, net = \
+        run(update_net_plot,
+            plot_willie_signals, plot_r2_signals, plot_t2_signals,
+            length_bga, num_ab_spans, length_ab_spans, ab_span_amp_gain,
+            tap_loc, num_ab_roadms, span_ab_boostamp_gain,
+            eta, not_eta)
 
     if plot_results:
         # Add results of current network config to plots
@@ -1107,6 +1150,10 @@ for tap_loc in range(3, 5):
     all_bob_bits.append(bobsbits_list)
     #print('\n\nALL ALICE POWERS: \n', all_alice_powers, '\n')
 
+
+runtime = datetime.datetime.now() - starttime
+print('Runtime (until plots displayed): ', runtime)
+
 if plot_results:
     # Finish the plots, which now have all the results
     finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode, bobsbits_list)
@@ -1114,7 +1161,8 @@ if plot_results:
 
 # Surface plot(s)
 zlabel = 'Alice Optimal Power [dBm]'
-#surfaceplot_vs_willie_loc(num_ab_spans, ab_span_amp_gain, modes_span, zlabel, zdata=all_alice_powers)
+surfaceplot_vs_tap_loc(tap_loc_start, tap_loc_end, num_ab_roadms,
+    modes_span, zlabel, zdata=all_alice_powers)
 
 print('\n')
 if update_net_plot: 
@@ -1125,7 +1173,4 @@ else:
     print("\n*** *** Topology plot not up to date! (Toggled off)\n")
 
 
-print('\n*** Done!\n\n')
-print("*** NOTES:")
-print("\t-Changing # of bg channels from 10 will break things \
-    \n\t because ch5 for Alice is indexed explicitly as [4] at Willie OSNRs")
+print('\n*** All Done.')
