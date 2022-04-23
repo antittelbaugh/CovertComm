@@ -604,10 +604,10 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
     # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 3
+    modes_to_test    = 17
     
     # Number of modes Alice will test and transmit up to
-    max_modes  = 10000
+    max_modes  = 20000
 
     # Log list of mode numbers Alice will actually test with:
     modes_span = np.logspace(0, np.log10(max_modes), num=modes_to_test)
@@ -1044,7 +1044,7 @@ starttime = datetime.datetime.now()
 
 # Toggles
 
-update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
+update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
 plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
 
 plot_willie_signals = 0  # Plots of individual signals (we don't use much)
@@ -1075,10 +1075,10 @@ print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_ga
 # tap_loc = 1
 # Start and end Willie tap locations for the whole test to be run over
 tap_loc_start = 3
-tap_loc_end   = 4
+tap_loc_end   = 5
 
 # Number of ROADMs on the Alice to Bob link
-num_ab_roadms      = 4
+num_ab_roadms      = 5
 
 
 # Percentage of input power that makes it through Willie's tap to the next ROADM
@@ -1152,7 +1152,7 @@ for tap_loc in range(tap_loc_start, tap_loc_end + 1):
 
 
 runtime = datetime.datetime.now() - starttime
-print('Runtime (until plots displayed): ', runtime)
+print('*** Runtime (until plots displayed): ', runtime)
 
 if plot_results:
     # Finish the plots, which now have all the results
@@ -1170,7 +1170,7 @@ if update_net_plot:
     # of the ** most recent ** network ("net") from the most recent call to run()
     plotnet(net)
 else:
-    print("\n*** *** Topology plot not up to date! (Toggled off)\n")
+    print("*** *** Topology plot not up to date! (Toggled off)\n")
 
 
 print('\n*** All Done.')
