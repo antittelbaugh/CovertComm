@@ -597,7 +597,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     power_a_test_init   = -95*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 2.20*dBm
+    power_a_stepsize    = 1.20*dBm
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
     max_twin_tests   = 150
@@ -605,7 +605,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
     # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 12
+    modes_to_test    = 14
     
     # Number of modes Alice will test and transmit up to
     max_modes  = 100000
@@ -876,12 +876,15 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
 
 
     # Alice's powers
-    c_cov = calc_c_cov(modes_span, power_a_test_list_db)
-
     plt.figure(1)
     plt.plot(modes_span, power_a_test_list_db, label=label)
-    plt.plot(modes_span, -c_cov*np.log(1/np.sqrt(modes_span)), linestyle='--', 
-        label=f'Empirical: (c_cov)log(n), c_cov = {c_cov:.2f}dBm')
+    
+    # We calculate c_cov in Watts (Alice's powers are converted dBm --> W in calc_c_cov())
+    c_cov = calc_c_cov(modes_span, power_a_test_list_db)
+    # Now we scale the expected power dropoff, 1/sqrt(n) by c_cov, THEN convert ALL to dBm
+    power_a_empirical = 10*np.log10(1000*c_cov/np.sqrt(modes_span))
+    plt.plot(modes_span, power_a_empirical, linestyle='--', 
+        label=f'Empirical: c_cov/np.sqrt(n), c_cov = {10*np.log10(1000*c_cov):.2f}dBm')
     #plt.plot(modes_span, c_cov*np.log(1/np.sqrt(modes_span)), 'm')
 
     # Willie's actual nRE across the modes Alice found the best powers for
@@ -1030,7 +1033,7 @@ def calc_L(n, B):
 
     L = np.exp(intercept)
 
-    print(f'\nMost recent covert capacity, L: {L:.6f}\n')
+    print(f'\nMost recent covert capacity, L: {L:.6f}\n bits')
 
     return L
 
@@ -1060,13 +1063,17 @@ def calc_c_cov(n, P_dBm):
 
     intercept = LSparams[0]
 
-    c_cov = np.exp(intercept)
+    c_cov = np.exp(intercept)  # now in [W] (linear scale)
 
-    # But we want the c_cov to be back in dBm for the plot
-    c_cov = 10*np.log10(c_cov*1000)
+    # READ THIS: c_cov is in Watts now. We return it in Watts, even though
+    # the plot it's used for is in dBm. We have to convert c_cov and the 
+    # data to dBm all together. Not just c_cov and return it in dBm. 
+    ## No: c_cov = 10*np.log10(c_cov*1000)
 
-    print(f'\nMost recent c_cov: {c_cov:.4f}dBm')
+    # But we convert to dBm in this print, bc it looks nicer
+    print(f'\nMost recent c_cov: {10*np.log10(1000*c_cov):.4f} dBm')
 
+    # Return in WATTS (linear scale)
     return c_cov
 
 
