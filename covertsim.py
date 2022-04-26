@@ -486,7 +486,7 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
         color.update(colorMap)
     nfont = {'fontname': 'helvetica', 'penwidth': 3, 'fontsize':38}
 
-    title = 'Covert Communication Network)'
+    title = 'Optical Covert Communication Network'
     title += '\nPlot Updated: ' + str(datetime.datetime.now())
 
     g = pgv.AGraph(strict=False, directed=directed, layout=layout,
@@ -498,6 +498,9 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
     colors = {node: color.get(type(node), 'black') for node in nodes}
     for node in nodes:
         g.add_node(node.name, color=colors[node], **nfont)
+
+    g.add_node('tap', color='black', **nfont)
+
     # Only plot 1 link per pair
     linkcount = {}
     for link in net.links:
@@ -597,15 +600,15 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     power_a_test_init   = -95*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 1.20*dBm
+    power_a_stepsize    = 0.30*dBm
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
-    max_twin_tests   = 150
+    max_twin_tests   = 250
 
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
     # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 14
+    modes_to_test    = 6
     
     # Number of modes Alice will test and transmit up to
     max_modes  = 100000
@@ -864,7 +867,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
 
 
 def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin, 
-    nRE_list, bobsbits_list, label_strings, time_per_mode):
+    nRE_list, bobsbits_list, label_strings, time_per_use):
     "Plots the result data (vs. number of pulses) and the theoretical fits.\
     Plots are finished in the other function."
 
@@ -872,7 +875,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     label = 'Simulated: ' + label_strings[0]
 
     # Label for the x-axis of all plots
-    xlabel = 'Optical Pulses in a Transmission (All time slots filled)'
+    xlabel = 'Channel Uses in a Transmission (All slots filled)'
 
 
     # Alice's powers
@@ -902,29 +905,32 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
         label=f'Empirical: L * sqrt(n), L = {L:.4f}')
     
-    # Alice covert bitrate to Bob
-    transmit_time_ms = modes_span * time_per_mode * 1000  # Total transmission times across the mode numbers
-    print(f"\n\nAlice's total transmission time for a burst with {modes_span[-1]:.0f} modes: {transmit_time_ms[-1]:.6f} [ms]")
+    # Alice covert bitrate to Bob [s]
+    transmit_times = modes_span * time_per_use  # Total transmission times across the mode numbers
+    print(f"\n\nAlice's total transmission time for a burst with {modes_span[-1]:.0f} \
+        modes: {transmit_times[-1]*1000:.6f} [ms]")
     # Bit rate at the max number of modes for a given pulse in [bits/sec]: 
-    maxmode_covert_bitrate = bobsbits_list[-1]/(transmit_time_ms[-1]/1000)  # bit/s
-    print(f"Alice's covert bit rate to Bob for max # modes: {(maxmode_covert_bitrate/1000):.2f} [kbit/s]\n")
+    #maxmode_covert_bitrate = bobsbits_list[-1]/(transmit_times[-1])  # bit/s
+    #print(f"Alice's covert bit rate to Bob for max # modes: {(maxmode_covert_bitrate/1000):.2f} [kbit/s]\n")
     
-    bob_bitrate_list_kbit = (bobsbits_list/(transmit_time_ms/1000))/1000  # kbits/s from the second "/1000"
+    bob_bitrate_list_kbit = (bobsbits_list/(transmit_times))/1000  # kbits/s from the second "/1000"
     plt.figure(4)
     plt.plot(modes_span, bob_bitrate_list_kbit, label=label)
-    #plt.plot(modes_span, L/np.sqrt(modes_span), linestyle='--',
-    #    label=f'Empirical: L/sqrt(n), L = {L:.4f}')
+    # Empirical: same as for bits just divided by transmit times (and 1/1000 for kbit)
+    plt.plot(modes_span, L*np.sqrt(modes_span)/(1000*transmit_times), linestyle='--',
+       label=f'Empirical: L*sqrt(n)/(T*n), L = {L:.4f}')
+    plt.yscale('log')
     #plt.ylim(0, 2*bob_bitrate_list_kbit[2])  # Feel free to change, as needed
 
     return None
 
 
 
-def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode, bobsbits_list):
-    "Complete the 4 plots in plotrunresults(), adding labels, titles, and the theoretical curves."
+def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, bobsbits_list):
+    "Complete the 4 plots in plotrunresults(), adding labels, titles, and the empirical curves."
 
     # Label for the x-axis of all plots
-    xlabel = 'Optical Pulses in a Transmission (All time slots filled)'
+    xlabel = 'Channel Uses in a Transmission (All slots filled)'
     # Label for the part of the plot titles after the dependent variable (so it's easy to change all of them)
     plottitle_vs = ' vs. Optical Pulses in a Transmission (All slots filled)'
 
@@ -973,7 +979,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode,
     plt.figure(4)
     plottitle = 'Alice Covert Bit Rate to Bob [kbits/s]'
     plottitle += plottitle_vs
-    plottitle += '\nPulse Duration: ' + f'{time_per_mode*10**9:.2f} ns'
+    plottitle += '\nChannel Use Duration, T: ' + f'{time_per_use*10**9:.2f} ns'
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.xscale('log')
@@ -1090,7 +1096,7 @@ starttime = datetime.datetime.now()
 
 # Toggles
 
-update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
+update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
 plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
 do_surface_plot     = 0  # Surface plot of inputted data (list) vs. the different tap locations
 
@@ -1101,8 +1107,8 @@ plot_t2_signals     = 0
 # ________________________________________________________________________
 # VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
 
-length_bga      = 15.0*km  # ro -- r1 span; Background to Alice's ROADM
-length_ab_spans = 9.0*km  # Alice's ROADM to Willie's tap
+length_bga      = 5.0*km  # ro -- r1 span; Background to Alice's ROADM
+length_ab_spans = 50.0*km  # Alice's ROADM to Willie's tap
 
 # length_wb       = 10.1*km  # Willie's tap to Bob's ROADM -- Willie's tap can be anywhere, so not using this?
 
@@ -1136,7 +1142,7 @@ not_eta = 2   # [%]
 
 
 # Duration of the pulses that ALice would hypothetically send. This simulation doesn't model time.
-time_per_mode = 10e-9  # 10ns pulses (?)
+time_per_use = 20e-9  # 20ns pulses. Arbitrary. 
 
 #           + more!
 
@@ -1189,7 +1195,7 @@ for tap_loc in range(tap_loc_start, tap_loc_end + 1):
     if plot_results:
         # Add results of current network config to plots
         plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin, 
-            nRE_list, bobsbits_list, label_strings, time_per_mode)
+            nRE_list, bobsbits_list, label_strings, time_per_use)
 
     # Store results of run
     all_alice_powers.append(power_a_test_list_db)
@@ -1199,11 +1205,11 @@ for tap_loc in range(tap_loc_start, tap_loc_end + 1):
 
 
 runtime = datetime.datetime.now() - starttime
-print('*** Runtime (until plots displayed): ', runtime)
+print('\n\n*** Runtime (until plots displayed): ', runtime)
 
 if plot_results:
     # Finish the plots, which now have all the results
-    finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_mode, bobsbits_list)
+    finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, bobsbits_list)
 
 
 # Surface plot(s)
