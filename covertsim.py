@@ -224,10 +224,6 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     tap_abs = 100 - eta - not_eta
     print(f'\nPercentage input power lost due to absorption at Willie\'s tap: {tap_abs:.4f}%')
     
-
-    # Now recalculate the given eta, % of input power that makes it through Willie's tap
-    eta = (eta/100) * (100 - tap_abs)  # [%]
-
     # Splitter element. LINEOUT is port that continues on the line. Port 2 goes to Willie (t3).
     # split is a dictionary with ports mapped to percentage power passed (eta and not_eta).
     tap = net.add_node('tap', cls=Splitter, split={LINEOUT:eta, 2:not_eta})
@@ -449,7 +445,7 @@ def configterminals(net):
 
 # Monitoring helper functions
 def getsignalwatts(node, port=None):
-    "Return monitored signal, ase noise, and nli noise power in watts"
+    "Return monitored signal, ase noise, and nli noise power in Watts"
     monitor = node.monitor # Access the monitors on any nodes that have them
     return {s.index: {'pwrW': monitor.get_power(s),
                       'aseW': monitor.get_ase_noise(s),
@@ -484,7 +480,7 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
     color = {Roadm: 'red', LineTerminal: 'blue'}
     if colorMap:
         color.update(colorMap)
-    nfont = {'fontname': 'helvetica', 'penwidth': 3, 'fontsize':38}
+    nfont = {'fontname': 'helvetica', 'penwidth': 3, 'fontsize':100}
 
     title = 'Optical Covert Communication Network'
     title += '\nPlot Updated: ' + str(datetime.datetime.now())
@@ -531,7 +527,7 @@ def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
         label += 'Total gain: ' + f'{gain_sum:.1f}' + ' dB\n\n\n'
 
         g.add_edge(node1.name, node2.name,
-                   fontsize=38, fontname='helvetica',
+                   fontsize=100, fontname='helvetica',
                    label=label,
                    penwidth=2)
 
@@ -597,18 +593,18 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     RE_margin  = 0.05
     
     # Arbitrary initial test power
-    power_a_test_init   = -95*dBm
+    power_a_test_init   = -90*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 0.30*dBm
+    power_a_stepsize    = 1.00*dBm
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
-    max_twin_tests   = 250
+    max_twin_tests   = 200
 
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
     # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 6
+    modes_to_test    = 20
     
     # Number of modes Alice will test and transmit up to
     max_modes  = 100000
@@ -625,8 +621,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     print("\n\n_______________ALICE DIGITAL TWIN TESTING_______________\n")
     # Alice creates an instance of the network defined above to find the highest power
     # she can without exceeding her bugeted relative entropy at Willie (plus a safety margin [%]). 
-    # She calculates the max RE at Willie here at using the max number of modes. 
-    # In the next section, Alice uses this power (and the same max number of modes to perform the
+    # In the next section, Alice uses these powers in the
     # "real" transmission to Bob, and we'll see how many covert bits he can receive (vs. # of modes). 
 
     print(f'Alice power optimizations starting from: {power_a_test_init:.4f} dBm')
@@ -884,7 +879,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     
     # We calculate c_cov in Watts (Alice's powers are converted dBm --> W in calc_c_cov())
     c_cov = calc_c_cov(modes_span, power_a_test_list_db)
-    # Now we scale the expected power dropoff, 1/sqrt(n) by c_cov, THEN convert ALL to dBm
+    # Now we scale the expected power dropoff, 1/sqrt(n) by c_cov, THEN convert that WITH n to log scale:
     power_a_empirical = 10*np.log10(1000*c_cov/np.sqrt(modes_span))
     plt.plot(modes_span, power_a_empirical, linestyle='--', 
         label=f'Empirical: c_cov/np.sqrt(n), c_cov = {10*np.log10(1000*c_cov):.2f}dBm')
@@ -893,7 +888,8 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     # Willie's actual nRE across the modes Alice found the best powers for
     plt.figure(2)
     plt.plot(modes_span, nRE_list, label=label)
-    plt.ylim(0.8*min(nRE_list), 1.1*nRE_budget) # Let's always plot from 0 to the budget
+    #plt.ylim(0.8*min(nRE_list), 1.1*nRE_budget)
+    plt.ylim(0.0015, 0.0030)
     # 4/21/22: No theoretical curve for RE; it stays constant.
 
     # Bob's covert bits    
@@ -903,7 +899,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     plt.figure(3)
     plt.plot(modes_span, bobsbits_list, label=label)
     plt.plot(modes_span, L*np.sqrt(modes_span), linestyle='--',
-        label=f'Empirical: L * sqrt(n), L = {L:.4f}')
+        label=f'Empirical: L * sqrt(n), L = {L:.6f}')
     
     # Alice covert bitrate to Bob [s]
     transmit_times = modes_span * time_per_use  # Total transmission times across the mode numbers
@@ -918,7 +914,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     plt.plot(modes_span, bob_bitrate_list_kbit, label=label)
     # Empirical: same as for bits just divided by transmit times (and 1/1000 for kbit)
     plt.plot(modes_span, L*np.sqrt(modes_span)/(1000*transmit_times), linestyle='--',
-       label=f'Empirical: L*sqrt(n)/(T*n), L = {L:.4f}')
+       label=f'Empirical: L*sqrt(n)/(T*n), L = {L:.6f}')
     plt.yscale('log')
     #plt.ylim(0, 2*bob_bitrate_list_kbit[2])  # Feel free to change, as needed
 
@@ -970,7 +966,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, 
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.ylabel("Covert Bits [bits]")
-    plt.yscale('log')
+    #plt.yscale('log')
     plt.xlabel(xlabel)
     plt.legend()
     plt.grid(True)
@@ -1073,7 +1069,7 @@ def calc_c_cov(n, P_dBm):
 
     # READ THIS: c_cov is in Watts now. We return it in Watts, even though
     # the plot it's used for is in dBm. We have to convert c_cov and the 
-    # data to dBm all together. Not just c_cov and return it in dBm. 
+    # modes_span to log scale TOGETHER. Not just c_cov and return it in dBm. See above, where called. 
     ## No: c_cov = 10*np.log10(c_cov*1000)
 
     # But we convert to dBm in this print, bc it looks nicer
@@ -1096,9 +1092,9 @@ starttime = datetime.datetime.now()
 
 # Toggles
 
-update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
+update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
 plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
-do_surface_plot     = 0  # Surface plot of inputted data (list) vs. the different tap locations
+do_surface_plot     = 1  # Surface plot of inputted data (list) vs. the different tap locations
 
 plot_willie_signals = 0  # Plots of individual signals (we don't use much)
 plot_r2_signals     = 0
@@ -1108,11 +1104,11 @@ plot_t2_signals     = 0
 # VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
 
 length_bga      = 5.0*km  # ro -- r1 span; Background to Alice's ROADM
-length_ab_spans = 50.0*km  # Alice's ROADM to Willie's tap
+length_ab_spans = 25.0*km  # Length of EACH span between intermediate ROADMs on the AB line
 
 # length_wb       = 10.1*km  # Willie's tap to Bob's ROADM -- Willie's tap can be anywhere, so not using this?
 
-num_ab_spans        = 1        # Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
+num_ab_spans        = 2        # Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
                            # Significant impact on runtime. With ~10 mode numbers, maybe 3s times this value.
 print('num_ab_spans: ', num_ab_spans)
 
@@ -1127,14 +1123,14 @@ print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_ga
 # 0 (before first added ROADM) to n, the number of added intermediate ROADMs. Doesn't have to start at 0. 
 # tap_loc = 1
 # Start and end Willie tap locations for the whole test to be run over
-tap_loc_start = 1
-tap_loc_end   = 1
+tap_loc_start = 0
+tap_loc_end   = 2
 
 # Number of ROADMs on the Alice to Bob link
-num_ab_roadms      = 2
+num_ab_roadms      = 5
 
 
-# Percentage of input power that makes it through Willie's tap to the next ROADM
+# Percentage of input power that makes it through/past Willie's tap to the next ROADM
 eta     = 97  # [%]
 # Percentage of input power Willie collects from his tap
 not_eta = 2   # [%]
@@ -1214,9 +1210,10 @@ if plot_results:
 
 # Surface plot(s)
 if do_surface_plot:
-    zlabel = 'Alice Optimal Power [dBm]'
+    #zlabel = 'Alice Optimal Power [dBm]'
+    zlabel = 'Covert Bits at Bob'
     surfaceplot_vs_tap_loc(tap_loc_start, tap_loc_end, num_ab_roadms,
-        modes_span, zlabel, zdata=all_alice_powers)
+        modes_span, zlabel, zdata=all_bob_bits)
 
 print('\n')
 if update_net_plot: 
