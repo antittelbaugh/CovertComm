@@ -593,13 +593,13 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     RE_margin  = 0.05
     
     # Arbitrary initial test power
-    power_a_test_init   = -90*dBm
+    power_a_test_init   = -110*dBm
 
     # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 1.00*dBm
+    power_a_stepsize    = 0.20*dBm
 
     # Max number of twin networks Alice will create and calculate Willie's RE on. 
-    max_twin_tests   = 200
+    max_twin_tests   = 400
 
     # This is the number of different mode numbers Alice will run through the test networks; 
     # the number of points in modes_span. Higher value --> smoother plots.
@@ -609,8 +609,10 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     # Number of modes Alice will test and transmit up to
     max_modes  = 100000
 
-    # Log list of mode numbers Alice will actually test with:
-    modes_span = np.logspace(0, np.log10(max_modes), num=modes_to_test)
+    # List of a subset of values from the range of values of n. These are the n values that everything will be tested using.
+    ###modes_span = np.logspace(0, np.log10(max_modes), num=modes_to_test)
+    modes_span = np.linspace(1, max_modes, num=modes_to_test)
+
     #___________________________________________________________________________________________________________
     
     # Initialize lists of Alice's optimal powers and num iterations to find them
@@ -870,7 +872,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     label = 'Simulated: ' + label_strings[0]
 
     # Label for the x-axis of all plots
-    xlabel = 'Channel Uses in a Transmission (All slots filled)'
+    xlabel = 'n, Channel Uses in a Transmission (All slots filled)'
 
 
     # Alice's powers
@@ -903,8 +905,7 @@ def plotrunresults(modes_span, power_a_test_list_db, nRE_budget, RE_margin,
     
     # Alice covert bitrate to Bob [s]
     transmit_times = modes_span * time_per_use  # Total transmission times across the mode numbers
-    print(f"\n\nAlice's total transmission time for a burst with {modes_span[-1]:.0f} \
-        modes: {transmit_times[-1]*1000:.6f} [ms]")
+    print(f"\n\nAlice total transmission time with {modes_span[-1]:.0f} modes: {transmit_times[-1]*10**6:.6f} [us]")
     # Bit rate at the max number of modes for a given pulse in [bits/sec]: 
     #maxmode_covert_bitrate = bobsbits_list[-1]/(transmit_times[-1])  # bit/s
     #print(f"Alice's covert bit rate to Bob for max # modes: {(maxmode_covert_bitrate/1000):.2f} [kbit/s]\n")
@@ -926,7 +927,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, 
     "Complete the 4 plots in plotrunresults(), adding labels, titles, and the empirical curves."
 
     # Label for the x-axis of all plots
-    xlabel = 'Channel Uses in a Transmission (All slots filled)'
+    xlabel = 'n, Channel Uses in a Transmission (All slots filled)'
     # Label for the part of the plot titles after the dependent variable (so it's easy to change all of them)
     plottitle_vs = ' vs. Optical Pulses in a Transmission (All slots filled)'
 
@@ -936,7 +937,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, 
     plottitle += f"\nRE safety margin: {RE_margin*100:.1f}%"
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
-    plt.ylabel("Alice Optimal Power [dBm]")
+    plt.ylabel("P, Alice Optimal Power [dBm]")
     plt.xlabel(xlabel)
     plt.xscale('log')
     plt.legend()
@@ -965,7 +966,7 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, 
     plottitle += plottitle_vs
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
-    plt.ylabel("Covert Bits [bits]")
+    plt.ylabel("B, Covert Bits at Bob [bits]")
     #plt.yscale('log')
     plt.xlabel(xlabel)
     plt.legend()
@@ -973,13 +974,13 @@ def finishplots(modes_span, nRE_budget, RE_margin, label_strings, time_per_use, 
 
 
     plt.figure(4)
-    plottitle = 'Alice Covert Bit Rate to Bob [kbits/s]'
+    plottitle = 'Alice to Bob Covert Bit Rate During Transmission [kbits/s]'
     plottitle += plottitle_vs
     plottitle += '\nChannel Use Duration, T: ' + f'{time_per_use*10**9:.2f} ns'
     plottitle += '\n' + label_strings[1] + '  |  ' + label_strings[2]
     plt.title(plottitle)
     plt.xscale('log')
-    plt.ylabel("Alice Covert Bit Rate to Bob [kbits/s]")
+    plt.ylabel("Alice to Bob Covert Bit Rate During Transmission [kbits/s]")
     plt.xlabel(xlabel)
     plt.legend()
     plt.grid(True)
@@ -1003,7 +1004,7 @@ def surfaceplot_vs_tap_loc(tap_loc_start, tap_loc_end, num_ab_roadms, modes_span
     willie_locs_range = range(tap_loc_start, tap_loc_end+1)
     pulses, willie_locs = np.meshgrid(modes_span, list(willie_locs_range))
     surf1 = ax.plot_surface(pulses, willie_locs, np.array(zdata), cmap=cm.coolwarm)
-    plt.xlabel('Optical Pulses in a Transmission (All slots filled)')
+    plt.xlabel('n, Channel Uses in a Transmission (All slots filled)')
     plt.ylabel('Willie Tap Position')
     plt.yticks(np.arange(1, num_ab_roadms + 1, 1.0))
     ax.set_zlabel(zlabel)
@@ -1124,7 +1125,7 @@ print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_ga
 # tap_loc = 1
 # Start and end Willie tap locations for the whole test to be run over
 tap_loc_start = 0
-tap_loc_end   = 2
+tap_loc_end   = 5
 
 # Number of ROADMs on the Alice to Bob link
 num_ab_roadms      = 5
@@ -1210,8 +1211,8 @@ if plot_results:
 
 # Surface plot(s)
 if do_surface_plot:
-    #zlabel = 'Alice Optimal Power [dBm]'
-    zlabel = 'Covert Bits at Bob'
+    #zlabel = 'P, Alice Optimal Power [dBm]'
+    zlabel = 'B, Covert Bits at Bob'
     surfaceplot_vs_tap_loc(tap_loc_start, tap_loc_end, num_ab_roadms,
         modes_span, zlabel, zdata=all_bob_bits)
 
@@ -1225,3 +1226,10 @@ else:
 
 
 print('\n*** All Done.')
+
+""" NOTE:
+It appears that Willie OSNR at far enough away locations for his tap is so bad that
+Alice's power has virtually no limit. Even with absurdly high powers, the nRE at Willie is still below budget.
+This might be why some power plots change abruptly with n (especially visible in surface plot). But the power
+step size also affects the smoothness of the plots significantly.'
+"""
