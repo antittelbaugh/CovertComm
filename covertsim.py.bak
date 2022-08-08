@@ -1,0 +1,456 @@
+#!/usr/bin/python3
+"""
+covertsim.py:
+
+Simple covert communication using Mininet-Optical's simulation API.
+
+Note: This is similar to, but currently slightly different from, the
+full end-to-end emulation API, and it does not use the emulated
+dataplane or control plane.
+
+Bob Lantz, March 2022
+
+Additions made by Tyler Mills, March 2022. 
+
+"""
+
+from mnoptical.network import Network
+# Note: Fiber() is a length of fiber and Segment() is a
+# (Fiber, Amplifier) tuple
+from mnoptical.link import Span as Fiber, SpanTuple as Segment
+from mnoptical.node import Transceiver, Roadm, LineTerminal
+from mnoptical.units import abs_to_db
+
+import numpy as np
+
+# Units
+km = dB = dBm = 1.0
+m = .001
+
+# ROADM port numbers (arbitrary for simulation)
+LINEIN = 0
+LINEOUT = 1
+ADD = 100
+DROP = 200
+
+# Terminal TX/RX port numbers (arbitrary for simulation)
+TX = 100
+RX = 200
+
+# Parameters
+TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
+CH5ALICE = 5  # Alice's covert channel
+
+
+
+# *******************************************************************
+# Parameterized Topology Constants
+span0_length = 7*km  # ro -- r1 span; Background to Alice's ROADM
+length_aw    = 3.5*km  # Alice's ROADM to Willie's tap
+length_wb    = 3.5*km  # Willie's tap to Bob's ROADM
+
+
+n = 1  # Number of channel uses. Will use as loop bound, probably... 
+    
+
+num_roadms = 1
+
+# Covert Comm Variables  ********************************************
+
+# Alice's transmission power, which Alice chooses such her
+# relative entropy budget for Willie is not exceeded (see below). 
+power_a = -60*dBm
+
+
+# Budget for Total Relative Entropy at Willie. This tracks with 
+# Relates to lower bound of Willie's detection error probability
+# (which  Alice wants low). Typical value is 0.05**2, which bounds
+# Willie prob(error) > 0.45. 
+nRE_budget = 0.05**2  # 0.0025
+
+
+
+# *******************************************************************
+# Toggles
+update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
+plot_willie_signals = 0
+plot_r2_signals     = 0
+plot_t2_signals     = 0
+
+# *******************************************************************
+
+
+
+# Physical model API helpers
+def Span(length, amp=None):
+    "Return a fiber segment of length km with a compensating amp"
+    return Segment(span=Fiber(length=length), amplifier=amp)
+
+# Network topology
+def createnetwork():
+    """We model a simple network for covert communication.
+       Background traffic originates at t0 and is multiplexed
+       by r0, amplified by boost0, and received at r1's line input.
+
+       Alice transmits her covert communication from t1, and it is
+       added to the background traffic by r1.
+
+       r0 -> boost0 -> r1 -> boost1 --> tap ("amplifier") --> r2
+       |               |                |                     |
+       t0 (bg)         t1 (Alice)       Willie                t2 (Bob)
+
+       We assign the port numbers explicitly and symmetrically:
+
+       r0 --> LINEIN:r1:LINEOUT --> LINEIN:r2
+       |ADD          |ADD                  |DROP
+       t0:TX...      t1:TX                 t2:RX
+
+       Note 1: Getting the port assignment right and the rules right
+       is an essential, but tricky, part of getting any SDN
+       network to work properly!
+
+       Note 2: The tap/amplifier only has a single input and output
+       port so we don't have to worry about its port numbering.
+
+       For now, we model Willie by monitoring tap's input signal.
+
+       Background traffic is on channels 1-10 but channel 5 isn't
+       passed by r1.  Alice's traffic is on channel 5 and is added at
+       r1."""
+
+    net = Network()
+
+    # Background traffic generator
+    transceivers = [Transceiver(i,f'tx{i}',0*dBm)
+                    for i in range(1, TXCOUNT+1)]
+    t0 = net.add_lt('t0', transceivers=transceivers )
+    r0 = net.add_roadm('r0', monitor_mode='out' )
+
+    # Alice & Bob's respective terminals and roadms
+    # Note low transmit power for Alice (Bob's tx power isn't used)
+    t1 = net.add_lt('t1', transceivers=[Transceiver(1,'tx1', power_a)],
+                    monitor_mode='out')
+    t2 = net.add_lt('t2', transceivers=[Transceiver(1,'tx1',0*dBm)],
+                    monitor_mode='in')
+    r1 = net.add_roadm('r1', monitor_mode='out')
+    r2 = net.add_roadm('r2', monitor_mode='in')
+    
+    # Background traffic goes from r0 -> boost0 -> 25km -> r1
+    boost0 = net.add_amplifier('boost0', target_gain=17*dB, boost=True,
+                               monitor_mode='out')
+    amp0 = net.add_amplifier('amp0', target_gain=25*.2)
+    spans0 = [Span( length=span0_length, amp=amp0)]
+    net.add_link(
+        r0, r1, src_out_port=LINEOUT, dst_in_port=LINEIN,
+        boost_amp=boost0, spans=spans0)
+
+    # Merged traffic goes from r1 -> boost1 -> 25km -> tap -> 25km -> r2
+    tap = net.add_amplifier(
+        'tap', target_gain=25*.2*dB, monitor_mode='in')
+    boost1 = net.add_amplifier('boost1', target_gain=3*dB, boost=True,
+                               monitor_mode='out')
+    spans1 = [Span(length=length_aw, amp=tap), Span(length=length_wb)]
+    net.add_link(
+        r1, r2, src_out_port=LINEOUT, dst_in_port=LINEIN,
+        boost_amp=boost1, spans=spans1 )
+
+    # Background traffic add links at r0
+    for i in range(TXCOUNT):
+        net.add_link(t0, r0, src_out_port=TX+i, dst_in_port=ADD+i,
+                     spans=[Span(1*m)])
+
+    # Local add link at r1 (Alice) and drop link at r2 (Bob)
+    net.add_link(
+        t1, r1, src_out_port=TX, dst_in_port=ADD, spans=[Span(1*m)])
+    net.add_link(
+        r2, t2, src_out_port=DROP, dst_in_port=RX, spans=[Span(1*m)])
+
+    return net
+
+
+def configroadms(net):
+    "Configure ROADMs"
+    r0, r1, r2 = [net.name_to_node[f'r{i}'] for i in (0, 1, 2)]
+
+    # r0 multiplexes all background channels onto its line out
+    for i in range(TXCOUNT):
+        r0.install_switch_rule(
+            in_port=ADD+i, out_port=LINEOUT, signal_indices=[1+i])
+
+    # r1 passes all channels except 5
+    for i in range(TXCOUNT):
+        if 1+i != CH5ALICE:
+            r1.install_switch_rule(
+                in_port=LINEIN, out_port=LINEOUT, signal_indices=[1+i])
+
+    # Channel 5 added at r1
+    r1.install_switch_rule(
+        in_port=ADD, out_port=LINEOUT, signal_indices=[CH5ALICE])
+
+    # Channel 5 dropped at r2
+    r2.install_switch_rule(
+        in_port=LINEIN, out_port=DROP, signal_indices=[CH5ALICE])
+
+    # Dump ROADM connections and flow tables
+    for roadm in r0, r1, r2:
+        print(f'*** {roadm} connections and flow tables')
+        print(f'*** {roadm} inputs: {roadm.port_to_node_in}')
+        print(f'*** {roadm} outputs {roadm.port_to_node_out}')
+
+
+def configterminals(net):
+    "Configure terminals and transceivers"
+    t0, t1, t2 = [net.name_to_node[f't{i}'] for i in (0, 1, 2)]
+
+    # Configure background transmitters
+    for i in range(TXCOUNT):
+        t0.assoc_tx_to_channel(
+            t0.id_to_transceivers[1+i], 1+i, out_port=TX+i)
+
+    # Configure Alice's transmitter and Bob's receivers
+    t1.assoc_tx_to_channel(
+        t1.id_to_transceivers[1], CH5ALICE, out_port=TX)
+    t2.assoc_rx_to_channel(
+        t2.id_to_transceivers[1], CH5ALICE, in_port=RX)
+
+    # Turn on all transceivers
+    t2.turn_on()
+    t1.turn_on()
+    t0.turn_on()
+
+
+# Monitoring helper functions
+def getsignalwatts(node, port=None):
+    "Return monitored signal, ase noise, and nli noise power in watts"
+    monitor = node.monitor # Access the monitors on any nodes that have them
+    return {s.index: {'pwrW': monitor.get_power(s),
+                      'aseW': monitor.get_ase_noise(s),
+                      'nliW': monitor.get_nli_noise(s)}
+            for s in monitor.get_optical_signals(port)}
+
+def wtodbm(W):
+    "Return watts as dBm"
+    return abs_to_db(W*1000.0) if W != 0 else float('-inf')
+
+def printdbm(sigwatts):
+    "Print signal watts as dBm"
+    for ch, entries in sigwatts.items():
+        pdbm = wtodbm(entries['pwrW'])
+        adbm = wtodbm(entries['aseW'])
+        ndbm = wtodbm(entries['nliW'])
+        print(f'ch{ch}: pwr {pdbm:.2f}dBm '
+              f'ase {adbm:.2f}dBm nli {ndbm:.2f}dBm')
+    print()
+
+
+# Plot Network Graph
+def plotnet(net, outfile="covertsim.png", directed=True, layout='circo',
+            colorMap=None, title='Covert Communication Network'):
+    "Plot network graph to outfile"
+    try:
+        import pygraphviz as pgv
+    except:
+        print(
+            '*** Note: Please install python3-pygraphviz for plotting\n')
+        return
+    color = {Roadm: 'red', LineTerminal: 'blue'}
+    if colorMap:
+        color.update(colorMap)
+    nfont = {'fontname': 'helvetica bold', 'penwidth': 3}
+    g = pgv.AGraph(strict=False, directed=directed, layout=layout,
+                   label=title, labelloc='t', **nfont)
+    roadms = net.roadms
+    terms = net.line_terminals
+    amps = net.amplifiers
+    nodes = terms + roadms
+    colors = {node: color.get(type(node), 'black') for node in nodes}
+    for node in nodes:
+        g.add_node(node.name, color=colors[node], **nfont)
+    # Only plot 1 link per pair
+    linkcount = {}
+    for link in net.links:
+        node1, node2 = link.src_node, link.dst_node
+        count = linkcount.get((node1,node2), 0)
+        linkcount[node1, node2] = count + 1
+        if count >= 1: continue
+        port1 = node1.node_to_port_out[node2]
+        port1 = port1[0] if len(port1)<2 else f'{port1[0]}...'
+        port2 = node2.node_to_port_in[node1]
+        port2 = port2[0] if len(port2)<2 else f'{port2[0]}...'
+        label = f'{node1}:{port1}'
+        for span, amp in link.spans:
+            label += f'->{span.length/1e3}km'
+            if amp:
+                label += f'->{amp.name}'
+        label += f'->{node2}:{port2}   \n\n\n'
+        g.add_edge(node1.name, node2.name,
+                   fontsize=10, fontname='helvetica bold',
+                   label=label,
+                   penwidth=2)
+    print("*** Plotting network topology to", outfile)
+    g.layout()
+    g.draw(outfile)
+
+# Plot Signals at node:port
+def plotsignals(node, port=None):
+    "Plot signals at node:port"
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import ScalarFormatter, FormatStrFormatter
+    except:
+        print('*** Note: Please install matplotlib for plotting\n')
+        return
+    name = node.name
+    fig, ax = plt.subplots()
+    title = f'Signal and noise power at {name}'
+    title = title if port is None else title + f' port {port}'
+    signals = node.monitor.get_optical_signals(port=port)
+    signals = sorted(signals, key=lambda s: s.index)
+    sigwatts = getsignalwatts(node, port)
+    xvals = [s.frequency/1e12 for s in signals]
+    labels = {'pwr': 'Signal power',
+              'ase': 'ASE noise', 'nli': 'NLI noise'}
+    for field in 'pwr', 'ase', 'nli':
+        yvals = [wtodbm(sigwatts[s.index][field+'W']) for s in signals]
+        assert len(xvals) == len(yvals)
+        plt.scatter(xvals, yvals, label=labels[field])
+    ax.get_xaxis().set_major_formatter(FormatStrFormatter('%.2f'))
+    plt.title(title)
+    plt.ylabel('dBm')
+    plt.xlabel('THz')
+    plt.legend()
+    plt.grid()
+    fname = f'{name}.png' if port is None else f'{name}-{port}.png'
+    print(f'*** Saving signal plot for {name} to {fname}...')
+    plt.savefig(fname)
+
+
+def willie_input_osnr(tap):
+    willie_sig_power_dict = tap.monitor.get_dict_power()      # returns: (signal, signal power)
+    willie_ase_power_dict = tap.monitor.get_dict_ase_noise()  # returns: (signal, ase power)
+    
+    # print(willie_sig_power_dict, willie_ase_power_dict)
+    osnr_w = sum(willie_sig_power_dict.values()) / sum(willie_ase_power_dict.values())
+    
+    print("Willie OSNR: ", osnr_w)
+    return osnr_w
+
+
+# Run tests
+def run():
+    "Run test transmission(s) on our modeled network"
+
+    # Create network
+    print('*** Creating network')
+    net = createnetwork()
+    
+    if update_net_plot: 
+        # Plot to file
+        plotnet(net)
+
+    # Configure network
+    print('*** Configuring network')
+    configroadms(net)
+    configterminals(net)
+
+    ##print('*** Monitoring signal and noise power\n')
+
+    # Monitor Alice's transmit power _________________________________________ A L I C E
+    print("\n\t\tA L I C E \n")
+    t1 = net.name_to_node['t1']  # Looking up node by name
+    p_a_monitor = getsignalwatts(t1)
+    print("*** Monitoring transmit power out of t1:")
+    printdbm(p_a_monitor)
+    
+    print(f"Alice power [W]: {power_a:.4f}")
+
+    """
+    # Monitor merged signals out of boost1 (bg + Alice)
+    boost1 = net.name_to_node['boost1']
+    print("*** Monitoring merged signals out of boost1:")
+    sigwatts = getsignalwatts(boost1)
+    printdbm(sigwatts)
+    
+    """
+    
+    # Monitor Willie (tap) signals ___________________________________________ W I L L I E
+    print("\n\t\tW I L L I E \n")
+    # Important!: Right now we are allowing Willie to observe 100%
+    # of the signal; more realistically we might do a 99/1 split
+    # by lowering the amp gain slightly and attenuating Willie's
+    # signals appropriately.
+    tap = net.name_to_node['tap']
+    print("*** Monitoring input signals at tap (NON-ATTENUATED!!):")
+    sigwatts = getsignalwatts(tap)
+    printdbm(sigwatts)
+    
+    
+    # OSNR at Willie's tap for Alice's channel only
+    ## willie_input_osnr = 
+    willie_input_osnr_list = tap.monitor.get_list_osnr()
+    #print("\nwillie osnr list: \n", willie_input_osnr_list)
+    print("\nwillie osnr [dB] ch5: \n", willie_input_osnr_list[4][1])  # Alice: 2nd spot in tuple in ch5. *******How do this generally?!
+
+    willie_input_osnr = willie_input_osnr_list[4][1]
+
+    # Relative entropy per channel use at Willie
+    RE = (1/2)*np.log( (1 + willie_input_osnr) - (1 + willie_input_osnr**-1)**-1 )
+    nRE = n * RE  # This is total RE, the per use times the number of channel uses
+    
+    print(f"Willie total relative entropy budget set by Alice: {nRE_budget:.6f}")
+    print(f"Actual Willie total relative entropy: {nRE:.6f}")
+    
+    if nRE >= nRE_budget:
+        print("\n===== /!\  Alice relative entropy budget exceeded! Power too high! \n")
+    
+    
+    # willie_prob_err = TBD -- or not TBD, because this behaves the same as relative entropy (Boulat)
+    
+    if plot_willie_signals: 
+        plotsignals(tap, 0)
+    
+
+    # Monitor Bob ____________________________________________________________ B O B
+    print("\n\t\tB O B \n")
+    
+    if plot_r2_signals:
+        # Plot input signals at r2
+        r2 = net.name_to_node['r2']
+        plotsignals(r2, LINEIN)
+
+    # Monitor Bob's received signal (t2 gets only Alice's channel)
+    t2 = net.name_to_node['t2']
+    print("*** Monitoring incoming signal at t2 (Bob, receiving only Alice's channel):")
+    sigwatts = getsignalwatts(t2, RX)
+    printdbm(sigwatts)
+    if plot_t2_signals:
+        plotsignals(t2, RX)
+    
+    
+    print('-------bob power [W]: ', t2.monitor.get_dict_power() )
+    print('-------bob ase [W]: ', t2.monitor.get_dict_ase_noise() )
+    
+    
+    # OSNR and covert bits at Bob
+    osnr_bob_list = t2.monitor.get_list_osnr()  # This returns OSNR in dB, which can be negative. 
+    print("Bob OSNR [dB]: ", osnr_bob_list[0][1])
+    
+    osnr_bob = 10**(osnr_bob_list[0][1] / 10) # convert OSNR dB to linear. Can't be <0 else log is undefined. 
+    print(f"Bob OSNR [linear]: {osnr_bob:.4f}")
+    osnr_bob_peruse = osnr_bob / n
+    
+    bobsbits = n/2 * np.log(1 + osnr_bob_peruse)
+    print(f"\nCOVERT BITS RECEIVED BY BOB FOR THIS RUN: {bobsbits:.2f}\n")
+    
+    # ________________________________________________________________________
+    
+    
+    
+    
+    if not update_net_plot:
+        print("\n\n*** *** *** Topology plot not updated! (Toggled off)\n\n")
+    
+
+# Do it!
+run()
+print('*** Done!')

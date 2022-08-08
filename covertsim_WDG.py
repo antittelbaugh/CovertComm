@@ -44,17 +44,10 @@ DROP = 2
 TX = 1
 RX = 2
 
-
-
-# _________________________________________________________________________
 # FIXED Topology Parameters (variable ones are at the very bottom)
-
 # Currently, changing these will cause problems bc ch5 for Alice is indexed explicitly as [4] for Willie OSNR
 TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
 CH5ALICE = 5  # Alice's covert channel
-
-# _________________________________________________________________________
-
 
 
 """
@@ -66,6 +59,123 @@ new power = old power + or - random times given percent of old power
 
 """
 
+# ===============================================================================================================
+# S E T T I N G S     ...Even more settings are in run(). Make them constants out here with the rest..?
+# ===============================================================================================================
+
+# Toggles
+
+update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
+plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
+do_surface_plot     = 0  # Surface plot of inputted data (list) vs. the different tap locations
+
+plot_willie_signals = 0  # Plots of individual signals (we don't use much)
+plot_r2_signals     = 0
+plot_t2_signals     = 0
+
+# ________________________________________________________________________
+# VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
+
+# ro -- r1 span; Background to Alice's ROADM
+length_bga      = 5.0*km
+# Length of EACH span between intermediate ROADMs on the AB line
+length_ab_spans = 25.0*km
+
+# Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
+# Significant impact on runtime. With ~10 mode numbers, maybe 3s times this value.
+num_ab_spans        = 2
+print('num_ab_spans: ', num_ab_spans)
+
+# Gain of the repeated amps on the AB span
+ab_span_amp_gain= 3*dBm
+print('ab_span_amp_gain: ', ab_span_amp_gain, 'dB')
+
+# Gain on the initial boost amp on the AB spans between any ROADMs.
+span_ab_boostamp_gain = 3*dB
+print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_gain, 'dB')
+
+
+# ********** Willie/tap location in the Alice to Bob span **********
+# Anywhere from 0 (before first intermediate ROADM) to n, the number of intermediate ROADMs.
+# Loop over Willie's tap locations. The whole covert comm evaluation will be run for each location. 
+tap_loc_start = 1
+tap_loc_end   = 1
+
+# Number of ROADMs on the Alice to Bob link
+num_ab_roadms      = 3
+
+
+# Percentage of input power that makes it through/past Willie's tap to the next ROADM
+eta     = 97  # [%]
+# Percentage of input power Willie collects from his tap
+not_eta = 2   # [%]
+# Could make these random...^
+
+# Duration of the pulses that ALice would hypothetically send. This simulation doesn't model time.
+time_per_use = 20e-9  # 20ns pulses. Arbitrary. 
+
+#     + Anything else we want!
+
+
+# WAVELENGTH-DEPENDENT GAIN PROFILE (uncomment one)
+# To be used by all amps. If one desires different profiles for different amps, can be hardcoded. 
+# Making this a global constant rather than a variable that gets passed into all the functions. 
+#wdg_profile = 'linear'
+wdg_profile = 'wdg1'
+#wdg_profile = 'wdg2'
+
+#     + more profiles?
+
+
+#___________________________________________________________________________________________________________
+# Internal parameters chosen by Alice. We could make these function arguments like the others. 
+
+# Maximum Total Relative Entropy Alice wants to allow at Willie. 
+# Typical value is 0.05**2 = 0.0025, which bounds Willie's probability of error as > 0.45. 
+# Alice wants Willie's prob(error) as high as possible (so he can't decide if she's transmitting).
+nRE_budget = 0.05**2
+
+# How close [percentage] Alice will allow Willie's RE to be to her actual budget. Arbitrary. 
+RE_margin  = 0.05
+
+# Arbitrary initial test power
+power_a_test_init   = -125*dBm
+
+# Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
+power_a_stepsize    = 0.50*dBm
+
+# Max number of twin networks Alice will create and calculate Willie's RE on. 
+max_twin_tests   = 20
+
+# This is the number of different mode numbers Alice will run through the test networks; 
+# the number of points in modes_span. Higher value --> smoother plots.
+# Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
+modes_to_test    = 8
+
+# Number of modes Alice will test and transmit up to
+max_modes  = 100000
+
+# List of a subset of values from the range of values of n. These are the n values that everything will be tested using.
+###modes_span = np.logspace(0, np.log10(max_modes), num=modes_to_test)
+modes_span = np.linspace(1, max_modes, num=modes_to_test)
+
+#___________________________________________________________________________________________________________
+
+
+# ===============================================================================================================
+# PARAMETER CHECKS before running; abort if anything is set nonsensically
+
+if (tap_loc_end > num_ab_roadms) or (tap_loc_start < 0):
+    sys.exit('\n\n*** ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
+
+if (TXCOUNT != 10) or (CH5ALICE != 5):
+    sys.exit('\n\n*** ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
+
+if (eta + not_eta) > 100:
+    sys.exit('\n\n*** ABORT: Eta and (1-eta) can be < 100, but not more...\n\n')
+
+# ===============================================================================================================
+# ===============================================================================================================
 
 
 # Network topology
@@ -110,7 +220,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
         assert isinstance(amp, str), f'Span(): {amp} is not a string'
 
         if amp:
-            amp = net.add_amplifier(amp, **params, wdg_id='linear')
+            amp = net.add_amplifier(amp, **params, wdg_id=wdg_profile)
 
         return Segment(span=Fiber(length=length), amplifier=amp)
 
@@ -137,7 +247,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
     
     # Background traffic goes from r0 -> boost0 -> 25km -> r1
     boost0 = net.add_amplifier('boost0', target_gain=17*dB, boost=True,
-                               monitor_mode='out', wdg_id='linear')
+                               monitor_mode='out', wdg_id=wdg_profile)
     
     #amp0 = net.add_amplifier('amp0', target_gain=25*.2)  # From before the new Span()
     spans0 = [Span( length=length_bga, amp='amp0', target_gain=25*.2)]
@@ -211,7 +321,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
 
         name = 'boost_ab_' + f'{count}'
         boostamp = net.add_amplifier(name, target_gain=gain, boost=True, 
-            monitor_mode='out', wdg_id='linear')
+            monitor_mode='out', wdg_id=wdg_profile)
         
         return boostamp
 
@@ -580,41 +690,6 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
     resulting covert bits received by Bob (and bitrate), as well as the RE at Willie -- \
     all at the given selection of optical modes (pulses)."
 
-
-    #___________________________________________________________________________________________________________
-    # Internal parameters chosen by Alice. We could make these function arguments like the others. 
-
-    # Maximum Total Relative Entropy Alice wants to allow at Willie. 
-    # Typical value is 0.05**2 = 0.0025, which bounds Willie's probability of error as > 0.45. 
-    # Alice wants Willie's prob(error) as high as possible (so he can't decide if she's transmitting).
-    nRE_budget = 0.05**2
-
-    # How close [percentage] Alice will allow Willie's RE to be to her actual budget. Arbitrary. 
-    RE_margin  = 0.05
-    
-    # Arbitrary initial test power
-    power_a_test_init   = -120*dBm
-
-    # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-    power_a_stepsize    = 0.20*dBm
-
-    # Max number of twin networks Alice will create and calculate Willie's RE on. 
-    max_twin_tests   = 800
-
-    # This is the number of different mode numbers Alice will run through the test networks; 
-    # the number of points in modes_span. Higher value --> smoother plots.
-    # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-    modes_to_test    = 20
-    
-    # Number of modes Alice will test and transmit up to
-    max_modes  = 100000
-
-    # List of a subset of values from the range of values of n. These are the n values that everything will be tested using.
-    ###modes_span = np.logspace(0, np.log10(max_modes), num=modes_to_test)
-    modes_span = np.linspace(1, max_modes, num=modes_to_test)
-
-    #___________________________________________________________________________________________________________
-    
     # Initialize lists of Alice's optimal powers and num iterations to find them
     power_a_test_list_db = []
     power_a_test_num_list = []
@@ -1086,74 +1161,6 @@ def calc_c_cov(n, P_dBm):
 # ===============================================================================================================
 
 starttime = datetime.datetime.now()
-
-# ===============================================================================================================
-# S E T T I N G S
-# ===============================================================================================================
-
-# Toggles
-
-update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
-plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
-do_surface_plot     = 1  # Surface plot of inputted data (list) vs. the different tap locations
-
-plot_willie_signals = 0  # Plots of individual signals (we don't use much)
-plot_r2_signals     = 0
-plot_t2_signals     = 0
-
-# ________________________________________________________________________
-# VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
-
-length_bga      = 5.0*km  # ro -- r1 span; Background to Alice's ROADM
-length_ab_spans = 25.0*km  # Length of EACH span between intermediate ROADMs on the AB line
-
-# length_wb       = 10.1*km  # Willie's tap to Bob's ROADM -- Willie's tap can be anywhere, so not using this?
-
-num_ab_spans        = 2        # Number of spans of length length_ab_spans on the Alice to Bob link, each with amp
-                           # Significant impact on runtime. With ~10 mode numbers, maybe 3s times this value.
-print('num_ab_spans: ', num_ab_spans)
-
-ab_span_amp_gain= 3*dBm    # Gain of the repeated amps on the AB span
-print('ab_span_amp_gain: ', ab_span_amp_gain, 'dB')
-
-span_ab_boostamp_gain = 3*dB  # Gain on the initial boost amp on the AB spans between any ROADMs.
-print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_gain, 'dB')
-
-
-# ************************* Willie's location in the Alice to Bob span **********************************
-# 0 (before first added ROADM) to n, the number of added intermediate ROADMs. Doesn't have to start at 0. 
-# tap_loc = 1
-# Start and end Willie tap locations for the whole test to be run over
-tap_loc_start = 0
-tap_loc_end   = 5
-
-# Number of ROADMs on the Alice to Bob link
-num_ab_roadms      = 5
-
-
-# Percentage of input power that makes it through/past Willie's tap to the next ROADM
-eta     = 97  # [%]
-# Percentage of input power Willie collects from his tap
-not_eta = 2   # [%]
-# Could make these random...^
-
-
-# Duration of the pulses that ALice would hypothetically send. This simulation doesn't model time.
-time_per_use = 20e-9  # 20ns pulses. Arbitrary. 
-
-#           + more!
-
-# ===============================================================================================================
-# PARAMETER CHECKS before running; abort if anything is set nonsensically
-
-if (tap_loc_end > num_ab_roadms) or (tap_loc_start < 0):
-    sys.exit('\n\n*** ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
-
-if (TXCOUNT != 10) or (CH5ALICE != 5):
-    sys.exit('\n\n*** ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
-
-if (eta + not_eta) > 100:
-    sys.exit('\n\n*** ABORT: Eta and (1-eta) can be < 100, but not more...\n\n')
 
 
 
