@@ -30,6 +30,7 @@ import random as rand
 import sys
 import datetime
 
+# CONSTANTS WHICH SHOULD NEVER BE CHANGED _______________________________________________________________________
 # Units
 km = dB = dBm = 1.0
 m = .001
@@ -50,22 +51,12 @@ TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
 CH5ALICE = 5  # Alice's covert channel
 
 
-"""
-# ADD VARIANCE TO ALICE POWER: +/- randomly up to a given % 
-
-power_a_var = 0.01  # percent variance of Alice power
-power_a = power_a + (rand.random()*power_a_var*power_a*(-1)**(round(rand.random())))*dBm
-new power = old power + or - random times given percent of old power
-
-"""
-
 # ===============================================================================================================
-# S E T T I N G S     ...Even more settings are in run(). Make them constants out here with the rest..?
+# S E T T I N G S
 # ===============================================================================================================
 
-# Toggles
-
-update_net_plot     = 1  # Update the topology plot, covertsim.png, upon execution
+# Plot Toggles
+update_net_plot     = 0  # Update the topology plot, covertsim.png, upon execution
 plot_results        = 1  # Toggles the overall result plots (the whole point of this simulation)
 do_surface_plot     = 0  # Surface plot of inputted data (list) vs. the different tap locations
 
@@ -74,7 +65,7 @@ plot_r2_signals     = 0
 plot_t2_signals     = 0
 
 # ________________________________________________________________________
-# VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across topologies
+# VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across different topologies
 
 # ro -- r1 span; Background to Alice's ROADM
 length_bga      = 5.0*km
@@ -98,11 +89,11 @@ print('Boost amp gain (amps after each ROADM on AB line): ', span_ab_boostamp_ga
 # ********** Willie/tap location in the Alice to Bob span **********
 # Anywhere from 0 (before first intermediate ROADM) to n, the number of intermediate ROADMs.
 # Loop over Willie's tap locations. The whole covert comm evaluation will be run for each location. 
-tap_loc_start = 1
-tap_loc_end   = 1
+tap_loc_start = 0
+tap_loc_end   = 2
 
 # Number of ROADMs on the Alice to Bob link
-num_ab_roadms      = 3
+num_ab_roadms      = 5
 
 
 # Percentage of input power that makes it through/past Willie's tap to the next ROADM
@@ -120,11 +111,20 @@ time_per_use = 20e-9  # 20ns pulses. Arbitrary.
 # WAVELENGTH-DEPENDENT GAIN PROFILE (uncomment one)
 # To be used by all amps. If one desires different profiles for different amps, can be hardcoded. 
 # Making this a global constant rather than a variable that gets passed into all the functions. 
-#wdg_profile = 'linear'
-wdg_profile = 'wdg1'
-#wdg_profile = 'wdg2'
+# These are the profiles to be used by Alice in her digital twin of the "real" network
+wdg_profile_alice = 'linear'
+#wdg_profile_alice  = 'wdg1'
+#wdg_profile_alice = 'wdg2'
+
+# And these are the profiles used in the "real" network
+#wdg_profile_actual = 'linear'
+wdg_profile_actual  = 'wdg1'
+#wdg_profile_actual = 'wdg2'
+
 
 #     + more profiles?
+
+
 
 
 #___________________________________________________________________________________________________________
@@ -138,19 +138,21 @@ nRE_budget = 0.05**2
 # How close [percentage] Alice will allow Willie's RE to be to her actual budget. Arbitrary. 
 RE_margin  = 0.05
 
-# Arbitrary initial test power
-power_a_test_init   = -125*dBm
+# Initial power for Alice's (crude) power optimization.
+# A good range to allow for is, say, [-90, -20]dBm. Varies with topology obviously.
+# The plots will all be flat if the power "optimization" for-loop hits a ceiling.
+power_a_test_init   = -90*dBm
 
 # Alice power step size for optimum power search. RE at higher modes much more sensitive to Alice power. 
-power_a_stepsize    = 0.50*dBm
+power_a_stepsize    = 0.75*dBm
 
 # Max number of twin networks Alice will create and calculate Willie's RE on. 
-max_twin_tests   = 20
+max_twin_tests   = 150
 
 # This is the number of different mode numbers Alice will run through the test networks; 
 # the number of points in modes_span. Higher value --> smoother plots.
 # Total runtime is roughly *multiplied* by this value, depending on number of Willie locations, etc.
-modes_to_test    = 8
+modes_to_test    = 15
 
 # Number of modes Alice will test and transmit up to
 max_modes  = 100000
@@ -174,13 +176,82 @@ if (TXCOUNT != 10) or (CH5ALICE != 5):
 if (eta + not_eta) > 100:
     sys.exit('\n\n*** ABORT: Eta and (1-eta) can be < 100, but not more...\n\n')
 
+if power_a_test_init + power_a_stepsize*max_twin_tests < -40:
+    sys.exit('\n\n*** ABORT: Alice\'s twin network can\'t get beyond -40dB with these settings... Comment this out if okay.')
+
 # ===============================================================================================================
 # ===============================================================================================================
+
+# Writing the configuration (user settings) to a log file. It's easy to forget to 
+# record what settings you ran with. Log file is overwritten on each new console session.
+logfile = open('CovertCommsLog_OVERWRITTEN_EACH_SESSION.txt', 'w')
+
+starttime = datetime.datetime.now()
+logfile.write(str(dict({'\n============================== Run Start Time ': starttime})))
+logfile.write('\n')
+logfile.write(str(dict({'update_net_plot' : update_net_plot})))
+logfile.write('\n')
+logfile.write(str(dict({'plot_results' : plot_results})))
+logfile.write('\n')
+logfile.write(str(dict({'do_surface_plot' : do_surface_plot})))
+logfile.write('\n')
+logfile.write(str(dict({'plot_willie_signals' : plot_willie_signals})))
+logfile.write('\n')
+logfile.write(str(dict({'plot_r2_signals' : plot_r2_signals})))
+logfile.write('\n')
+logfile.write(str(dict({'plot_t2_signals' : plot_t2_signals})))
+logfile.write('\n')
+
+logfile.write(str(dict({'length_bga [km]' : length_bga})))
+logfile.write('\n')
+logfile.write(str(dict({'length_ab_spans [km]' : length_ab_spans})))
+logfile.write('\n')
+logfile.write(str(dict({'num_ab_spans' : num_ab_spans})))
+logfile.write('\n')
+logfile.write(str(dict({'ab_span_amp_gain [dB]' : ab_span_amp_gain})))
+logfile.write('\n')
+logfile.write(str(dict({'span_ab_boostamp_gain [dB]' : span_ab_boostamp_gain})))
+logfile.write('\n')
+logfile.write(str(dict({'tap_loc_start' : tap_loc_start})))
+logfile.write('\n')
+logfile.write(str(dict({'tap_loc_end' : tap_loc_end})))
+logfile.write('\n')
+logfile.write(str(dict({'num_ab_roadms' : num_ab_roadms})))
+logfile.write('\n')
+
+logfile.write(str(dict({'eta' : eta})))
+logfile.write('\n')
+logfile.write(str(dict({'not_eta' : not_eta})))
+logfile.write('\n')
+logfile.write(str(dict({'time_per_use' : time_per_use})))
+logfile.write('\n')
+
+logfile.write(str(dict({'wdg_profile_alice' : wdg_profile_alice})))
+logfile.write('\n')
+logfile.write(str(dict({'wdg_profile_actual' : wdg_profile_actual})))
+logfile.write('\n')
+
+logfile.write('\n')
+logfile.write(str(dict({'nRE_budget' : nRE_budget})))
+logfile.write('\n')
+logfile.write(str(dict({'RE_margin' : RE_margin})))
+logfile.write('\n')
+logfile.write(str(dict({'power_a_test_init [dBm]' : power_a_test_init})))
+logfile.write('\n')
+logfile.write(str(dict({'power_a_stepsize [dBm]' : power_a_stepsize})))
+logfile.write('\n')
+logfile.write(str(dict({'max_twin_tests' : max_twin_tests})))
+logfile.write('\n')
+logfile.write(str(dict({'modes_to_test' : modes_to_test})))
+logfile.write('\n')
+logfile.write(str(dict({'max_modes' : max_modes})))
+logfile.write('\n')
+logfile.write(str(dict({'modes_span' : modes_span})))
 
 
 # Network topology
 def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans, 
-    ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta):
+    ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta, digital_twin):
     """We model a simple network for covert communication.
        Background traffic originates at t0 and is multiplexed
        by r0, amplified by boost0, and received at r1's line input.
@@ -188,9 +259,9 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
        Alice transmits her covert communication from t1, and it is
        added to the background traffic by r1.
 
-       r0 -> boost0 -> r1 -> boost1 --> tap ("amplifier") --> r2
-       |               |                |                     |
-       t0 (bg)         t1 (Alice)       Willie                t2 (Bob)
+       r0 -> boost0 -> r1 -> boost1 --> tap --> r2
+       |               |                |        |
+       t0 (bg)         t1 (Alice)       Willie  t2 (Bob)
 
        We assign the port numbers explicitly and symmetrically:
 
@@ -202,7 +273,7 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
        is an essential, but tricky, part of getting any SDN
        network to work properly!
 
-       Note 2: The tap/amplifier only has a single input and output
+       Note 2: The tap/splitter only has a single input and output
        port so we don't have to worry about its port numbering.
 
        For now, we model Willie by monitoring tap's input signal.
@@ -212,6 +283,11 @@ def createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans,
        r1."""
 
     net = Network()
+
+    if digital_twin:
+        wdg_profile = wdg_profile_alice
+    else:
+        wdg_profile = wdg_profile_actual
 
 
     def Span(length, amp='', **params):
@@ -728,7 +804,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             
             print('*** Creating latest Alice digital twin network...')
             net = createnetwork(power_a_test, length_bga, num_ab_spans, length_ab_spans, 
-                ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta)
+                ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta, digital_twin=True)
             # Re-running this creates identical network, unless we add randomness
         
             # *****************************************************************************/////////////////
@@ -800,7 +876,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # Create network
         print('\n*** Creating network')
         net = createnetwork(power_a, length_bga, num_ab_spans, length_ab_spans, 
-            ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta)
+            ab_span_amp_gain, tap_loc, num_ab_roadms, span_ab_boostamp_gain, eta, not_eta, digital_twin=False)
         # Re-running this does not create a new network, without added randomness
 
         # Configure network
@@ -1160,9 +1236,6 @@ def calc_c_cov(n, P_dBm):
 # END OF FUNCTION DEFINITIONS
 # ===============================================================================================================
 
-starttime = datetime.datetime.now()
-
-
 
 # ===============================================================================================================
 # M  A  I  N
@@ -1231,12 +1304,23 @@ if update_net_plot:
 else:
     print("*** *** Topology plot not up to date! (Toggled off)\n")
 
-
 print('\n*** All Done.')
+
+
+logfile.write('\n\n______________Results______________\n')
+logfile.write(str(dict({'modes_span (rounded)' : modes_span})))
+logfile.write('\n\n')
+logfile.write(str(dict({'power_a_test_list_db' : power_a_test_list_db})))
+logfile.write('\n\n')
+logfile.write(str(dict({'nRE_list' : nRE_list})))
+logfile.write('\n\n')
+logfile.write(str(dict({'bobsbits_list' : bobsbits_list})))
+logfile.write('\n\n')
+logfile.close()
 
 """ NOTE:
 It appears that Willie OSNR at far enough away locations for his tap is so bad that
 Alice's power has virtually no limit. Even with absurdly high powers, the nRE at Willie is still below budget.
 This might be why some power plots change abruptly with n (especially visible in surface plot). But the power
-step size also affects the smoothness of the plots significantly.'
+step size also affects the smoothness of the plots significantly.
 """
