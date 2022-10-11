@@ -63,6 +63,7 @@ do_surface_plot     = 0  # Surface plot of inputted data (list) vs. the differen
 plot_willie_signals = 0  # Plots of individual signals (we don't use much)
 plot_r2_signals     = 0
 plot_t2_signals     = 0
+quantum_willie      = 1 #Togles quantum functionality on and off
 
 # ________________________________________________________________________
 # VARIABLE Topology Parameters! These will be fed to createnetwork() to iterate across different topologies
@@ -792,14 +793,20 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # Resetting for each loop across the mode numbers we're testing at:
         RE_budget_ratio  = 0  # Ratio of RE of highest number of modes to budget; updated in loop below
         power_a_test = power_a_test_init
+        power_a_stepsize_new = power_a_stepsize
+        #inizialize power_fidelity count
+        power_fidelity = 8;
 
         # If power results in an RE safely below the budget, increase power
-        while (RE_budget_ratio < (1 - RE_margin)) and (twin_test_counter < max_twin_tests):
+        while ((RE_budget_ratio < (1 - RE_margin)) or (power_fidelity > 0)) and (twin_test_counter < max_twin_tests):
 
             print(f'\n --------  ITERATION {twin_test_counter + 1:.0f} for {n:.0f} modes  --------')
-
+            if RE_budget_ratio >= (1 - RE_margin):
+                power_a_test -=power_a_stepsize_new
+                power_a_stepsize_new = power_a_stepsize_new/2
+                power_fidelity -= 1
             if twin_test_counter > 0:  # start incrementing power after the first run
-                power_a_test += power_a_stepsize
+                power_a_test += power_a_stepsize_new
                 print(f"Alice test power increased to: {power_a_test:.4f} dBm")
             
             print('*** Creating latest Alice digital twin network...')
@@ -834,6 +841,8 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             
             # Relative entropy per channel use at Willie
             RE = (1/2)*np.log( (1 + willie_input_osnr_alice_lin) - (1 + willie_input_osnr_alice_lin**-1)**-1 )
+            if quantum_willie == 1:
+                RE = RE * 2 #quantum releative entropy
             nRE = n * RE  # Total RE is the RE in one use times the number of uses. Uses are optical modes.  
             # >>> nRE here is the RE at the CURRENT number of modes being used, not the max number overall being tested
 
@@ -844,7 +853,7 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             
             twin_test_counter += 1
 
-        power_a_test -= power_a_stepsize        # Take off last step, which caused RE to exceed margin
+        power_a_test -= power_a_stepsize_new              # Take off last step, which caused RE to exceed margin
         power_a_test_list_db.append(power_a_test)  # Store the optimized power for this number of modes
         power_a_test_num_list.append(twin_test_counter)
 
@@ -941,6 +950,8 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         print(f"Willie OSNR [linear] for ch5 (Alice): {willie_input_osnr_alice_lin:.4f}")
         # Relative entropy per channel use at Willie
         RE = (1/2)*np.log( (1 + willie_input_osnr_alice_lin) - (1 + willie_input_osnr_alice_lin**-1)**-1 )
+        if quantum_willie == 1:
+                RE = RE * 2 #quantum releative entropy
         nRE = n * RE  # Total RE is the RE in one use times the number of uses. Uses are optical modes.  
 
         #print(f"\nWillie total relative entropy budget set by Alice: {nRE_budget:.8f}")
