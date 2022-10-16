@@ -48,7 +48,8 @@ RX = 2
 # FIXED Topology Parameters (variable ones are at the very bottom)
 # Currently, changing these will cause problems bc ch5 for Alice is indexed explicitly as [4] for Willie OSNR
 TXCOUNT = 10  # 1 + number of background channels (1..TXCOUNT)
-CH5ALICE = 5  # Alice's covert channel
+CH5ALICE = 25  # Alice's covert channel
+noiseStart = 63 # which channel the 10 noise channels start on
 
 
 # ===============================================================================================================
@@ -171,8 +172,8 @@ modes_span = np.linspace(1, max_modes, num=modes_to_test)
 if (tap_loc_end > num_ab_roadms) or (tap_loc_start < 0):
     sys.exit('\n\n*** ABORT: Willie\'s tap location doesn\'t make sense (set by user)\n\n')
 
-if (TXCOUNT != 10) or (CH5ALICE != 5):
-    sys.exit('\n\n*** ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
+#if (TXCOUNT != 10) or (CH5ALICE != 5):
+    #sys.exit('\n\n*** ABORT: Setting TXCOUNT != 10 or CH5ALICE != 5 won\'t work (see comment where defined)\n\n')
 
 if (eta + not_eta) > 100:
     sys.exit('\n\n*** ABORT: Eta and (1-eta) can be < 100, but not more...\n\n')
@@ -568,14 +569,14 @@ def configroadms(net, num_ab_roadms):
     # r0 multiplexes all background channels onto its line out
     for i in range(TXCOUNT):
         r0.install_switch_rule(
-            in_port=ADD+i, out_port=LINEOUT, signal_indices=[1+i])
+            in_port=ADD+i, out_port=LINEOUT, signal_indices=[noiseStart+i])
 
 
     # r1 passes all channels except 5
     for i in range(TXCOUNT):
         if 1+i != CH5ALICE:
             r1.install_switch_rule(
-                in_port=LINEIN, out_port=LINEOUT, signal_indices=[1+i])
+                in_port=LINEIN, out_port=LINEOUT, signal_indices=[noiseStart+i])
 
     # Channel 5 added at r1
     r1.install_switch_rule(
@@ -586,7 +587,10 @@ def configroadms(net, num_ab_roadms):
         roadm = net.name_to_node[f'r_ab_{r}']
         for i in range(TXCOUNT):
             roadm.install_switch_rule(
-                in_port=LINEIN, out_port=LINEOUT, signal_indices=[1+i])
+                in_port=LINEIN, out_port=LINEOUT, signal_indices=[noiseStart+i])
+        if(CH5ALICE != noiseStart+4):
+            roadm.install_switch_rule(
+                in_port=LINEIN, out_port=LINEOUT, signal_indices=[CH5ALICE])
 
 
     # Channel 5 dropped at r2
@@ -613,7 +617,7 @@ def configterminals(net):
     # Configure background transmitters
     for i in range(TXCOUNT):
         t0.assoc_tx_to_channel(
-            t0.id_to_transceivers[1+i], 1+i, out_port=TX+i)
+            t0.id_to_transceivers[1+i], noiseStart+i, out_port=TX+i)
 
     # Configure Alice's transmitter and Bob's receivers
     t1.assoc_tx_to_channel(
@@ -834,7 +838,13 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
             willie_terminal = net.name_to_node['Willie']
             willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
             print('\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list)
-            willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+            if(CH5ALICE <= noiseStart):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[0][1]
+            elif(CH5ALICE == noiseStart+4):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+            else:
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[10][1]
+
 
             willie_input_osnr_alice_lin = 10**(willie_input_osnr_alice_db / 10)
             #print(f"Willie OSNR [linear] for ch5 (Alice): {willie_input_osnr_alice_lin:.4f}")
@@ -898,7 +908,13 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         willie_terminal = net.name_to_node['Willie']
         willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
         print('\n\n-----------willie_input_osnr_dB_list: ', willie_input_osnr_dB_list, '\n\n\n')
-        willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+        if(CH5ALICE <= noiseStart):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[0][1]
+        elif(CH5ALICE == noiseStart+4):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+        else:
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[10][1]
+
 
 
 
@@ -943,7 +959,13 @@ def run(update_net_plot, plot_willie_signals, plot_r2_signals, plot_t2_signals,
         # OSNR at Willie's tap for Alice's channel only (input at his terminal, linked to tap)
         willie_input_osnr_dB_list = willie_terminal.monitor.get_list_osnr()
         #print("\nwillie osnr list: \n", willie_input_osnr_dB_list)
-        willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+        if(CH5ALICE <= noiseStart):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[0][1]
+        elif(CH5ALICE == noiseStart+4):
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[4][1]
+        else:
+                willie_input_osnr_alice_db = willie_input_osnr_dB_list[10][1]
+
         print(f"\nWillie OSNR [dB] for ch5 (Alice): {willie_input_osnr_alice_db:.4f}")  # Alice: 2nd spot in tuple in ch5. *******How do this generally?!
         
         willie_input_osnr_alice_lin = 10**(willie_input_osnr_alice_db / 10)
